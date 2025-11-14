@@ -10,7 +10,11 @@
 #define QUEEN_VALUE  900
 #define KING_VALUE   20000 // A very large value
 
-// --- Piece-Square Tables (Positional Factors) ---
+// --- Mobility Bonus ---
+// We will add 1 "centipawn" for every legal move a piece has.
+#define MOBILITY_BONUS_PER_MOVE 1
+
+// --- Piece-Square Tables (Static) ---
 // These tables give bonuses/penalties for a piece being on a specific square.
 // All tables are defined from WHITE's perspective.
 // Black's score will be read by flipping the row index (e.g., row 0 becomes row 7).
@@ -82,7 +86,7 @@ static const int kingTable[8][8] = {
     { 20, 30, 10,  0,  0, 10, 30, 20}
 };
 
-// --- Private Helper Functions ---
+// --- Private Helper Functions (Static) ---
 
 /**
  * @brief Gets the base material value for a piece.
@@ -119,12 +123,72 @@ static int getPiecePositionalScore(PieceType type, PieceColor color, int r, int 
     }
 }
 
+// --- Private Mobility-Counting Functions (Dynamic) ---
+// These are simplified, non-recursive versions of move generation
+// used only for scoring.
+
+/**
+ * @brief Counts pseudo-legal moves for sliding pieces (Rook, Bishop, Queen).
+ */
+static int countSlidingMoves(BoardState *board, int r, int c, Piece p) {
+    int count = 0;
+    // 8 directions: 4 diagonal, 4 straight
+    int dR[] = {-1, -1,  1,  1, -1,  1,  0,  0};
+    int dC[] = {-1,  1, -1,  1,  0,  0, -1,  1};
+    
+    int startDir = (p.type == BISHOP) ? 0 : (p.type == ROOK) ? 4 : 0;
+    int endDir   = (p.type == BISHOP) ? 4 : (p.type == ROOK) ? 8 : 8; // Queen uses 0-8
+
+    for (int i = startDir; i < endDir; i++) {
+        for (int k = 1; k < 8; k++) {
+            int newR = r + dR[i] * k;
+            int newC = c + dC[i] * k;
+            
+            // Off the board
+            if (newR < 0 || newR >= 8 || newC < 0 || newC >= 8) break;
+            
+            if (board->squares[newR][newC].type == EMPTY) {
+                count++; // Can move to empty square
+            } else if (board->squares[newR][newC].color != p.color) {
+                count++; // Can capture opponent
+                break;   // Stop searching in this direction
+            } else {
+                break;   // Blocked by own piece
+            }
+        }
+    }
+    return count;
+}
+
+/**
+ * @brief Counts pseudo-legal moves for a Knight.
+ */
+static int countKnightMoves(BoardState *board, int r, int c, Piece p) {
+    int count = 0;
+    int dR[] = {-2, -2, -1, -1,  1,  1,  2,  2};
+    int dC[] = {-1,  1, -2,  2, -2,  2, -1,  1};
+    
+    for (int i = 0; i < 8; i++) {
+        int newR = r + dR[i];
+        int newC = c + dC[i];
+        
+        // Check if on board
+        if (newR >= 0 && newR < 8 && newC >= 0 && newC < 8) {
+            // Can move if square is empty or has opponent piece
+            if (board->squares[newR][newC].color != p.color) {
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
 // --- Public Function (from eval.h) ---
 
 /**
  * @brief Evaluates the current board state and returns a static score.
  * This function iterates through all 64 squares, summing up the
- * material and positional scores for every piece.
+ * material, positional (static), and mobility (dynamic) scores.
  */
 int evaluateBoard(BoardState *board) {
     int totalScore = 0;
@@ -135,16 +199,36 @@ int evaluateBoard(BoardState *board) {
             Piece p = board->squares[r][c];
 
             if (p.type != EMPTY) {
-                // Get the material and positional score for the piece
+                // --- 1. Get Material and Positional Score (Static) ---
                 int materialScore = getPieceValue(p.type);
                 int positionalScore = getPiecePositionalScore(p.type, p.color, r, c);
+                
+                int pieceScore = materialScore + positionalScore;
 
+                // --- 2. Get Mobility Score (Dynamic) ---
+                int mobilityScore = 0;
+                switch (p.type) {
+                    case KNIGHT:
+                        mobilityScore = countKnightMoves(board, r, c, p);
+                        break;
+                    case BISHOP: // fall-through
+                    case ROOK:   // fall-through
+                    case QUEEN:
+                        mobilityScore = countSlidingMoves(board, r, c, p);
+                        break;
+                    default:
+                        mobilityScore = 0; // (Pawn/King mobility is complex, skipping for now)
+                        break;
+                }
+
+                // --- 3. Add to Total Score ---
                 if (p.color == WHITE) {
-                    // Add score for White pieces
-                    totalScore += materialScore + positionalScore;
+                    totalScore += pieceScore;
+                    totalScore += (mobilityScore * MOBILITY_BONUS_PER_MOVE);
                 } else {
                     // Subtract score for Black pieces
-                    totalScore -= (materialScore + positionalScore);
+                    totalScore -= pieceScore;
+                    totalScore -= (mobilityScore * MOBILITY_BONUS_PER_MOVE);
                 }
             }
         }
