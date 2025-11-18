@@ -5,7 +5,8 @@
 
 // --- Piece / Color ---
 
-typedef enum {
+typedef enum
+{
     EMPTY,
     PAWN,
     KNIGHT,
@@ -15,7 +16,8 @@ typedef enum {
     KING
 } PieceType;
 
-typedef enum {
+typedef enum
+{
     WHITE,
     BLACK,
     NO_COLOR
@@ -23,12 +25,14 @@ typedef enum {
 
 // --- Basic Types ---
 
-typedef struct {
+typedef struct
+{
     int row;
     int col;
 } Position;
 
-typedef struct {
+typedef struct
+{
     PieceType type;
     PieceColor color;
 } Piece;
@@ -43,7 +47,8 @@ typedef struct {
 
 // --- Move Struct ---
 
-typedef struct {
+typedef struct
+{
     Position from;
     Position to;
     PieceType promotion; // For promotion moves; otherwise EMPTY
@@ -52,14 +57,16 @@ typedef struct {
 
 // --- Move List ---
 
-typedef struct {
+typedef struct
+{
     Move moves[MAX_MOVES_IN_LIST];
     int count;
 } MoveList;
 
 // --- Castling Rights ---
 
-typedef struct {
+typedef struct
+{
     int wk; // white king-side
     int wq; // white queen-side
     int bk; // black king-side
@@ -68,16 +75,17 @@ typedef struct {
 
 // --- Board State ---
 
-typedef struct {
-    Piece squares[8][8];       // Board representation
-    PieceColor currentPlayer;  // Side to move
+typedef struct
+{
+    Piece squares[8][8];      // Board representation
+    PieceColor currentPlayer; // Side to move
 
-    CastlingRights castling;   // Current castling rights
+    CastlingRights castling; // Current castling rights
 
-    Position enPassantTarget;  // Square behind pawn that moved 2 squares (or -1,-1)
+    Position enPassantTarget; // Square behind pawn that moved 2 squares (or -1,-1)
 
-    int halfmoveClock;         // For 50-move rule
-    int fullmoveNumber;        // Counts moves starting from 1
+    int halfmoveClock;  // For 50-move rule
+    int fullmoveNumber; // Counts moves starting from 1
 } BoardState;
 
 #endif
