@@ -14,4 +14,7 @@
  */
 Move findBestMove(BoardState *board);
 
+/* Expose helper to allow callers to obtain the list of legal moves */
+MoveList generateAllLegalMoves(BoardState *board);
+
 #endif // AI_H

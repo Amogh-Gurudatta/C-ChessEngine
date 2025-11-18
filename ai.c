@@ -4,9 +4,9 @@
 #include <limits.h> // For INT_MIN and INT_MAX
 
 #include "ai.h"
-#include "eval.h"     // From Person 3 (self) - for evaluateBoard()
-#include "game.h"     // From Person 2 - for makeMove(), undoMove(), isKingInCheck(), isSquareAttacked()
-#include "structs.h"  // From Person 1
+#include "eval.h"    // From Person 3 (self) - for evaluateBoard()
+#include "game.h"    // From Person 2 - for makeMove(), undoMove(), isKingInCheck(), isSquareAttacked()
+#include "structs.h" // From Person 1
 
 // Define the search depth for the Minimax algorithm
 #define SEARCH_DEPTH 3
@@ -22,7 +22,7 @@ static int minimax(BoardState *board, int depth, bool isMaximizingPlayer);
  * Generates a list of all moves that are *fully legal*
  * (i.e., do not result in the player's own king being in check).
  */
-static MoveList generateAllLegalMoves(BoardState *board);
+MoveList generateAllLegalMoves(BoardState *board); // removed 'static' so it is externally visible
 
 /**
  * Generates a list of *pseudo-legal* moves (all possible piece moves,
@@ -44,17 +44,17 @@ static void addMove(BoardState *board, MoveList *list, Move move);
 /**
  * @brief Helper to check if a square is attacked by the opponent.
  */
-static bool isSquareAttacked(BoardState *board, int r, int c, PieceColor attackerColor);
+// static bool isSquareAttacked(BoardState *board, int r, int c, PieceColor attackerColor);
 
 /**
  * @brief Checks for insufficient material (e.g., King vs King).
  */
 static bool isInsufficientMaterial(BoardState *board);
 
-
 // --- Public Function (from ai.h) ---
 
-Move findBestMove(BoardState *board) {
+Move findBestMove(BoardState *board)
+{
     Move bestMove;
     int bestValue = INT_MIN;
     bool foundMove = false;
@@ -63,7 +63,8 @@ Move findBestMove(BoardState *board) {
     MoveList legalMoves = generateAllLegalMoves(board);
 
     // Iterate through all legal moves
-    for (int i = 0; i < legalMoves.count; i++) {
+    for (int i = 0; i < legalMoves.count; i++)
+    {
         Move currentMove = legalMoves.moves[i];
 
         // 1. Make the move (ASSUMPTION: Person 2's makeMove handles all flags)
@@ -76,21 +77,23 @@ Move findBestMove(BoardState *board) {
         undoMove(board, currentMove);
 
         // Check if this move is better than the current best
-        if (moveValue > bestValue) {
+        if (moveValue > bestValue)
+        {
             bestValue = moveValue;
             bestMove = currentMove;
             foundMove = true;
         }
     }
 
-    if (!foundMove) {
+    if (!foundMove)
+    {
         // This handles stalemate or checkmate (no legal moves)
         // Return a "null" move. main.c should check for this.
         bestMove.from = (Position){-1, -1};
         bestMove.to = (Position){-1, -1};
         bestMove.flag = MOVE_NORMAL;
     }
-    
+
     return bestMove;
 }
 
@@ -103,10 +106,12 @@ Move findBestMove(BoardState *board) {
  * @param isMaximizingPlayer True if it's the AI's turn, false for the human.
  * @return The evaluation score for this board state.
  */
-static int minimax(BoardState *board, int depth, bool isMaximizingPlayer) {
-    
+static int minimax(BoardState *board, int depth, bool isMaximizingPlayer)
+{
+
     // Base Case 1: If we've reached max depth, return the static evaluation
-    if (depth == 0) {
+    if (depth == 0)
+    {
         // (ASSUMPTION: Person 3's eval.c provides this function)
         return evaluateBoard(board);
     }
@@ -114,12 +119,14 @@ static int minimax(BoardState *board, int depth, bool isMaximizingPlayer) {
     // --- NEW DRAW CHECKS ---
     // Base Case 2: 50-Move Rule (100 half-moves)
     // ASSUMPTION: board->halfmoveClock is managed by Person 2's makeMove/undoMove
-    if (board->halfmoveClock >= 100) {
+    if (board->halfmoveClock >= 100)
+    {
         return 0; // Draw
     }
-    
+
     // Base Case 3: Insufficient Material
-    if (isInsufficientMaterial(board)) {
+    if (isInsufficientMaterial(board))
+    {
         return 0; // Draw
     }
     // --- END NEW DRAW CHECKS ---
@@ -127,31 +134,40 @@ static int minimax(BoardState *board, int depth, bool isMaximizingPlayer) {
     MoveList legalMoves = generateAllLegalMoves(board);
 
     // Base Case 4: Checkmate or Stalemate
-    if (legalMoves.count == 0) {
+    if (legalMoves.count == 0)
+    {
         // (ASSUMPTION: Person 2's isKingInCheck() is available)
-        if (isKingInCheck(board, board->currentPlayer)) {
+        if (isKingInCheck(board, board->currentPlayer))
+        {
             // Checkmate: This is very bad for the current player
-            return isMaximizingPlayer ? INT_MIN : INT_MAX; 
-        } else {
+            return isMaximizingPlayer ? INT_MIN : INT_MAX;
+        }
+        else
+        {
             // Stalemate: A draw
             return 0;
         }
     }
 
-    if (isMaximizingPlayer) {
+    if (isMaximizingPlayer)
+    {
         // --- AI's Turn (Maximize) ---
         int bestValue = INT_MIN;
-        for (int i = 0; i < legalMoves.count; i++) {
+        for (int i = 0; i < legalMoves.count; i++)
+        {
             makeMove(board, legalMoves.moves[i]);
             int value = minimax(board, depth - 1, false);
             bestValue = (value > bestValue) ? value : bestValue;
             undoMove(board, legalMoves.moves[i]);
         }
         return bestValue;
-    } else {
+    }
+    else
+    {
         // --- Human's Turn (Minimize) ---
         int bestValue = INT_MAX;
-        for (int i = 0; i < legalMoves.count; i++) {
+        for (int i = 0; i < legalMoves.count; i++)
+        {
             makeMove(board, legalMoves.moves[i]);
             int value = minimax(board, depth - 1, true);
             bestValue = (value < bestValue) ? value : bestValue;
@@ -168,11 +184,15 @@ static int minimax(BoardState *board, int depth, bool isMaximizingPlayer) {
  * This is a simplified version checking only for King vs. King.
  * A more advanced version would also check for K vs KN, K vs KB.
  */
-static bool isInsufficientMaterial(BoardState *board) {
-    for (int r = 0; r < 8; r++) {
-        for (int c = 0; c < 8; c++) {
+static bool isInsufficientMaterial(BoardState *board)
+{
+    for (int r = 0; r < 8; r++)
+    {
+        for (int c = 0; c < 8; c++)
+        {
             PieceType type = board->squares[r][c].type;
-            if (type != EMPTY && type != KING) {
+            if (type != EMPTY && type != KING)
+            {
                 // Found a piece that is not a King, so material is sufficient
                 return false;
             }
@@ -182,7 +202,6 @@ static bool isInsufficientMaterial(BoardState *board) {
     return true;
 }
 
-
 // --- Legal Move Generation ---
 
 /**
@@ -190,55 +209,72 @@ static bool isInsufficientMaterial(BoardState *board) {
  * It does this by first generating all pseudo-legal moves,
  * then filtering out any that leave the king in check.
  */
-static MoveList generateAllLegalMoves(BoardState *board) {
+MoveList generateAllLegalMoves(BoardState *board) // removed 'static' from definition
+{
     MoveList pseudoLegalMoves;
     pseudoLegalMoves.count = 0;
-    
+
     MoveList finalLegalMoves;
     finalLegalMoves.count = 0;
 
     // 1. Get all pseudo-legal moves
     generatePseudoLegalMoves(board, &pseudoLegalMoves);
-    
+
     PieceColor currentPlayer = board->currentPlayer;
 
     // 2. Filter for legality (moves that don't put king in check)
-    for (int i = 0; i < pseudoLegalMoves.count; i++) {
+    for (int i = 0; i < pseudoLegalMoves.count; i++)
+    {
         Move move = pseudoLegalMoves.moves[i];
-        
+
         // Simulate the move
         makeMove(board, move); // From game.c
-        
+
         // Check if the current player's king is NOT in check
-        if (!isKingInCheck(board, currentPlayer)) { // From game.c
+        if (!isKingInCheck(board, currentPlayer))
+        { // From game.c
             finalLegalMoves.moves[finalLegalMoves.count++] = move;
         }
-        
+
         // Undo the move
         undoMove(board, move); // From game.c
     }
-    
+
     return finalLegalMoves;
 }
 
 /**
  * @brief Fills a MoveList with all pseudo-legal moves.
  */
-static void generatePseudoLegalMoves(BoardState *board, MoveList *list) {
+static void generatePseudoLegalMoves(BoardState *board, MoveList *list)
+{
     PieceColor player = board->currentPlayer;
 
-    for (int r = 0; r < 8; r++) {
-        for (int c = 0; c < 8; c++) {
+    for (int r = 0; r < 8; r++)
+    {
+        for (int c = 0; c < 8; c++)
+        {
             Piece p = board->squares[r][c];
-            if (p.color == player) {
-                switch (p.type) {
-                    case PAWN:   generatePawnMoves(board, list, r, c);   break;
-                    case KNIGHT: generateKnightMoves(board, list, r, c); break;
-                    case BISHOP: // Fall-through
-                    case ROOK:   // Fall-through
-                    case QUEEN:  generateSlidingMoves(board, list, r, c); break;
-                    case KING:   generateKingMoves(board, list, r, c);   break;
-                    default:     break;
+            if (p.color == player)
+            {
+                switch (p.type)
+                {
+                case PAWN:
+                    generatePawnMoves(board, list, r, c);
+                    break;
+                case KNIGHT:
+                    generateKnightMoves(board, list, r, c);
+                    break;
+                case BISHOP: // Fall-through
+                case ROOK:   // Fall-through
+                case QUEEN:
+                    generateSlidingMoves(board, list, r, c);
+                    break;
+                case KING:
+                    generateKingMoves(board, list, r, c);
+                    break;
+                default:
+                    break;
                 }
             }
         }
@@ -249,26 +285,30 @@ static void generatePseudoLegalMoves(BoardState *board, MoveList *list) {
  * @brief Helper to add a move, handling validation and flags.
  * This checks boundaries and ensures we don't move onto our own piece.
  */
-static void addMove(BoardState *board, MoveList *list, Move move) {
+static void addMove(BoardState *board, MoveList *list, Move move)
+{
     int toR = move.to.row;
     int toC = move.to.col;
 
     // Ensure move is on the board
-    if (toR < 0 || toR >= 8 || toC < 0 || toC >= 8) return;
+    if (toR < 0 || toR >= 8 || toC < 0 || toC >= 8)
+        return;
 
     // Check if destination is occupied by our own piece
     // (Pawn captures are handled separately in their function)
-    if (move.flag != MOVE_EN_PASSANT) {
-        if (board->squares[toR][toC].color == board->currentPlayer) return;
+    if (move.flag != MOVE_EN_PASSANT)
+    {
+        if (board->squares[toR][toC].color == board->currentPlayer)
+            return;
     }
 
     list->moves[list->count++] = move;
 }
 
-
 // --- Piece-Specific Move Generation (Updated) ---
 
-static void generatePawnMoves(BoardState *board, MoveList *list, int r, int c) {
+static void generatePawnMoves(BoardState *board, MoveList *list, int r, int c)
+{
     PieceColor player = board->currentPlayer;
     int dir = (player == WHITE) ? -1 : 1; // White moves up (row--), Black moves down (row++)
     int startRow = (player == WHITE) ? 6 : 1;
@@ -277,85 +317,103 @@ static void generatePawnMoves(BoardState *board, MoveList *list, int r, int c) {
     Position from = {r, c};
 
     // --- 1. Single move forward ---
-    if (r + dir >= 0 && r + dir < 8 && board->squares[r + dir][c].type == EMPTY) {
-        if (r + dir == promotionRank) {
+    if (r + dir >= 0 && r + dir < 8 && board->squares[r + dir][c].type == EMPTY)
+    {
+        if (r + dir == promotionRank)
+        {
             // Handle Promotion: Add 4 moves, one for each promotion piece
             addMove(board, list, (Move){from, {r + dir, c}, QUEEN, MOVE_PROMOTION});
             addMove(board, list, (Move){from, {r + dir, c}, ROOK, MOVE_PROMOTION});
             addMove(board, list, (Move){from, {r + dir, c}, BISHOP, MOVE_PROMOTION});
             addMove(board, list, (Move){from, {r + dir, c}, KNIGHT, MOVE_PROMOTION});
-        } else {
+        }
+        else
+        {
             // Normal 1-square push
             addMove(board, list, (Move){from, {r + dir, c}, EMPTY, MOVE_NORMAL});
         }
     }
 
     // --- 2. Double move from start ---
-    if (r == startRow && board->squares[r + dir][c].type == EMPTY && board->squares[r + 2 * dir][c].type == EMPTY) {
+    if (r == startRow && board->squares[r + dir][c].type == EMPTY && board->squares[r + 2 * dir][c].type == EMPTY)
+    {
         addMove(board, list, (Move){from, {r + 2 * dir, c}, EMPTY, MOVE_NORMAL});
     }
 
     // --- 3. Captures ---
     int captureCols[] = {c - 1, c + 1};
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 2; i++)
+    {
         int newC = captureCols[i];
-        if (newC >= 0 && newC < 8) {
+        if (newC >= 0 && newC < 8)
+        {
             // 3a. Standard Capture
             Piece target = board->squares[r + dir][newC];
-            if (target.type != EMPTY && target.color != player) {
-                if (r + dir == promotionRank) {
+            if (target.type != EMPTY && target.color != player)
+            {
+                if (r + dir == promotionRank)
+                {
                     // Capture with Promotion
                     addMove(board, list, (Move){from, {r + dir, newC}, QUEEN, MOVE_PROMOTION});
                     addMove(board, list, (Move){from, {r + dir, newC}, ROOK, MOVE_PROMOTION});
                     addMove(board, list, (Move){from, {r + dir, newC}, BISHOP, MOVE_PROMOTION});
                     addMove(board, list, (Move){from, {r + dir, newC}, KNIGHT, MOVE_PROMOTION});
-                } else {
+                }
+                else
+                {
                     // Normal capture
                     addMove(board, list, (Move){from, {r + dir, newC}, EMPTY, MOVE_NORMAL});
                 }
             }
-            
+
             // 3b. En Passant Capture
             // ASSUMPTION: board->enPassantTarget is the *square behind* the pawn that just moved
-            if (r + dir == board->enPassantTarget.row && newC == board->enPassantTarget.col) {
-                 addMove(board, list, (Move){from, {r + dir, newC}, EMPTY, MOVE_EN_PASSANT});
+            if (r + dir == board->enPassantTarget.row && newC == board->enPassantTarget.col)
+            {
+                addMove(board, list, (Move){from, {r + dir, newC}, EMPTY, MOVE_EN_PASSANT});
             }
         }
     }
 }
 
-static void generateKnightMoves(BoardState *board, MoveList *list, int r, int c) {
+static void generateKnightMoves(BoardState *board, MoveList *list, int r, int c)
+{
     // 8 possible L-shaped moves
-    int dR[] = {-2, -2, -1, -1,  1,  1,  2,  2};
-    int dC[] = {-1,  1, -2,  2, -2,  2, -1,  1};
+    int dR[] = {-2, -2, -1, -1, 1, 1, 2, 2};
+    int dC[] = {-1, 1, -2, 2, -2, 2, -1, 1};
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 8; i++)
+    {
         addMove(board, list, (Move){{r, c}, {r + dR[i], c + dC[i]}, EMPTY, MOVE_NORMAL});
     }
 }
 
-static void generateKingMoves(BoardState *board, MoveList *list, int r, int c) {
+static void generateKingMoves(BoardState *board, MoveList *list, int r, int c)
+{
     PieceColor player = board->currentPlayer;
     PieceColor opponent = (player == WHITE) ? BLACK : WHITE;
 
     // --- 1. Standard 1-square moves ---
     // 8 directions for a king, 1 step
-    int dR[] = {-1, -1, -1,  0,  0,  1,  1,  1};
-    int dC[] = {-1,  0,  1, -1,  1, -1,  0,  1};
+    int dR[] = {-1, -1, -1, 0, 0, 1, 1, 1};
+    int dC[] = {-1, 0, 1, -1, 1, -1, 0, 1};
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 8; i++)
+    {
         addMove(board, list, (Move){{r, c}, {r + dR[i], c + dC[i]}, EMPTY, MOVE_NORMAL});
     }
-    
+
     // --- 2. Castling ---
     // ASSUMPTION: isKingInCheck() is from Person 2
-    if (isKingInCheck(board, player)) {
+    if (isKingInCheck(board, player))
+    {
         return; // Cannot castle out of check
     }
 
     // ASSUMPTION: isSquareAttacked() is available
     // ASSUMPTION: board->castling is managed by Person 2's makeMove()
-    if (player == WHITE) {
+    if (player == WHITE)
+    {
         // White Kingside (wk)
         // Check rights, empty squares, and squares not attacked
         if (board->castling.wk &&
@@ -376,7 +434,9 @@ static void generateKingMoves(BoardState *board, MoveList *list, int r, int c) {
         {
             addMove(board, list, (Move){{7, 4}, {7, 2}, EMPTY, MOVE_CASTLE_QUEEN});
         }
-    } else { // BLACK
+    }
+    else
+    { // BLACK
         // Black Kingside (bk)
         if (board->castling.bk &&
             board->squares[0][5].type == EMPTY &&
@@ -399,41 +459,51 @@ static void generateKingMoves(BoardState *board, MoveList *list, int r, int c) {
     }
 }
 
-static void generateSlidingMoves(BoardState *board, MoveList *list, int r, int c) {
+static void generateSlidingMoves(BoardState *board, MoveList *list, int r, int c)
+{
     Piece p = board->squares[r][c];
 
     // Direction vectors: 4 diagonal, 4 straight
-    int dR[] = {-1, -1,  1,  1, -1,  1,  0,  0};
-    int dC[] = {-1,  1, -1,  1,  0,  0, -1,  1};
+    int dR[] = {-1, -1, 1, 1, -1, 1, 0, 0};
+    int dC[] = {-1, 1, -1, 1, 0, 0, -1, 1};
 
     // Set loop bounds based on piece type
-    int startDir = (p.type == BISHOP) ? 0 : (p.type == ROOK) ? 4 : 0;
-    int endDir   = (p.type == BISHOP) ? 4 : (p.type == ROOK) ? 8 : 8; // Queen uses all 8
+    int startDir = (p.type == BISHOP) ? 0 : (p.type == ROOK) ? 4
+                                                             : 0;
+    int endDir = (p.type == BISHOP) ? 4 : (p.type == ROOK) ? 8
+                                                           : 8; // Queen uses all 8
 
-    for (int i = startDir; i < endDir; i++) {
-        for (int k = 1; k < 8; k++) { // Iterate distance k
+    for (int i = startDir; i < endDir; i++)
+    {
+        for (int k = 1; k < 8; k++)
+        { // Iterate distance k
             int newR = r + dR[i] * k;
             int newC = c + dC[i] * k;
 
-            if (newR < 0 || newR >= 8 || newC < 0 || newC >= 8) break; // Off board
-            
+            if (newR < 0 || newR >= 8 || newC < 0 || newC >= 8)
+                break; // Off board
+
             Piece target = board->squares[newR][newC];
-            
-            if (target.type == EMPTY) {
+
+            if (target.type == EMPTY)
+            {
                 // Empty square, add move and continue
                 addMove(board, list, (Move){{r, c}, {newR, newC}, EMPTY, MOVE_NORMAL});
-            } else if (target.color != board->currentPlayer) {
+            }
+            else if (target.color != board->currentPlayer)
+            {
                 // Opponent piece, add capture and stop in this direction
                 addMove(board, list, (Move){{r, c}, {newR, newC}, EMPTY, MOVE_NORMAL});
-                break; 
-            } else {
+                break;
+            }
+            else
+            {
                 // Own piece, stop in this direction
-                break; 
+                break;
             }
         }
     }
 }
-
 
 /**
  * @brief Checks if a square (r, c) is attacked by any piece of attackerColor.
@@ -442,64 +512,86 @@ static void generateSlidingMoves(BoardState *board, MoveList *list, int r, int c
  * It's less efficient than a dedicated attack map.
  * Person 2 should ideally provide a fully vetted version in game.c.
  */
-static bool isSquareAttacked(BoardState *board, int r, int c, PieceColor attackerColor) {
-    // Check for attacks from sliding pieces (Queen, Rook, Bishop)
-    int dR[] = {-1, -1,  1,  1, -1,  1,  0,  0};
-    int dC[] = {-1,  1, -1,  1,  0,  0, -1,  1};
-    for (int i = 0; i < 8; i++) {
-        for (int k = 1; k < 8; k++) {
-            int nR = r + dR[i] * k;
-            int nC = c + dC[i] * k;
-            if (nR < 0 || nR >= 8 || nC < 0 || nC >= 8) break;
-            Piece p = board->squares[nR][nC];
-            if (p.type != EMPTY) {
-                if (p.color == attackerColor) {
-                    if (p.type == QUEEN) return true;
-                    if (i < 4 && p.type == BISHOP) return true; // Diagonal
-                    if (i >= 4 && p.type == ROOK) return true; // Straight
-                }
-                break; // Blocked by another piece
-            }
-        }
-    }
+// static bool isSquareAttacked(BoardState *board, int r, int c, PieceColor attackerColor)
+// {
+//     // Check for attacks from sliding pieces (Queen, Rook, Bishop)
+//     int dR[] = {-1, -1, 1, 1, -1, 1, 0, 0};
+//     int dC[] = {-1, 1, -1, 1, 0, 0, -1, 1};
+//     for (int i = 0; i < 8; i++)
+//     {
+//         for (int k = 1; k < 8; k++)
+//         {
+//             int nR = r + dR[i] * k;
+//             int nC = c + dC[i] * k;
+//             if (nR < 0 || nR >= 8 || nC < 0 || nC >= 8)
+//                 break;
+//             Piece p = board->squares[nR][nC];
+//             if (p.type != EMPTY)
+//             {
+//                 if (p.color == attackerColor)
+//                 {
+//                     if (p.type == QUEEN)
+//                         return true;
+//                     if (i < 4 && p.type == BISHOP)
+//                         return true; // Diagonal
+//                     if (i >= 4 && p.type == ROOK)
+//                         return true; // Straight
+//                 }
+//                 break; // Blocked by another piece
+//             }
+//         }
+//     }
 
-    // Check for attacks from knights
-    int knR[] = {-2, -2, -1, -1,  1,  1,  2,  2};
-    int knC[] = {-1,  1, -2,  2, -2,  2, -1,  1};
-    for (int i = 0; i < 8; i++) {
-        int nR = r + knR[i];
-        int nC = c + knC[i];
-        if (nR >= 0 && nR < 8 && nC >= 0 && nC < 8) {
-            Piece p = board->squares[nR][nC];
-            if (p.color == attackerColor && p.type == KNIGHT) return true;
-        }
-    }
+//     // Check for attacks from knights
+//     int knR[] = {-2, -2, -1, -1, 1, 1, 2, 2};
+//     int knC[] = {-1, 1, -2, 2, -2, 2, -1, 1};
+//     for (int i = 0; i < 8; i++)
+//     {
+//         int nR = r + knR[i];
+//         int nC = c + knC[i];
+//         if (nR >= 0 && nR < 8 && nC >= 0 && nC < 8)
+//         {
+//             Piece p = board->squares[nR][nC];
+//             if (p.color == attackerColor && p.type == KNIGHT)
+//                 return true;
+//         }
+//     }
 
-    // Check for attacks from pawns
-    int pawnDir = (attackerColor == WHITE) ? 1 : -1; // Attacker is white, they attack "down" (row++)
-    if (r + pawnDir >= 0 && r + pawnDir < 8) {
-        if (c - 1 >= 0) {
-            Piece p = board->squares[r + pawnDir][c - 1];
-            if (p.color == attackerColor && p.type == PAWN) return true;
-        }
-        if (c + 1 < 8) {
-            Piece p = board->squares[r + pawnDir][c + 1];
-            if (p.color == attackerColor && p.type == PAWN) return true;
-        }
-    }
+//     // Check for attacks from pawns
+//     int pawnDir = (attackerColor == WHITE) ? 1 : -1; // Attacker is white, they attack "down" (row++)
+//     if (r + pawnDir >= 0 && r + pawnDir < 8)
+//     {
+//         if (c - 1 >= 0)
+//         {
+//             Piece p = board->squares[r + pawnDir][c - 1];
+//             if (p.color == attackerColor && p.type == PAWN)
+//                 return true;
+//         }
+//         if (c + 1 < 8)
+//         {
+//             Piece p = board->squares[r + pawnDir][c + 1];
+//             if (p.color == attackerColor && p.type == PAWN)
+//                 return true;
+//         }
+//     }
 
-    // Check for attacks from king
-    for (int i = -1; i <= 1; i++) {
-        for (int j = -1; j <= 1; j++) {
-            if (i == 0 && j == 0) continue;
-            int nR = r + i;
-            int nC = c + j;
-            if (nR >= 0 && nR < 8 && nC >= 0 && nC < 8) {
-                Piece p = board->squares[nR][nC];
-                if (p.color == attackerColor && p.type == KING) return true;
-            }
-        }
-    }
-    
-    return false;
-}
+//     // Check for attacks from king
+//     for (int i = -1; i <= 1; i++)
+//     {
+//         for (int j = -1; j <= 1; j++)
+//         {
+//             if (i == 0 && j == 0)
+//                 continue;
+//             int nR = r + i;
+//             int nC = c + j;
+//             if (nR >= 0 && nR < 8 && nC >= 0 && nC < 8)
+//             {
+//                 Piece p = board->squares[nR][nC];
+//                 if (p.color == attackerColor && p.type == KING)
+//                     return true;
+//             }
+//         }
+//     }
+
+//     return false;
+// }
