@@ -62,3 +62,6 @@ board.txt
 
 #build
 build/
+
+#vscode
+.vscode/
