@@ -461,8 +461,8 @@ bool isSquareAttacked(BoardState *board, int r, int c, PieceColor attackerColor)
     // Pawns (attack squares differ by color)
     int pawnDir = (attackerColor == WHITE) ? -1 : 1; // attacker white pawns move "up" (row--)
     // Note: ai.c earlier had a different pawnDir convention; ensure consistency:
-    // Here: if attacker is WHITE, they attack from r-1 (towards smaller row)
-    int pr = r + pawnDir;
+    // Here: if attacker is WHITE, they attack from r+1 (towards smaller row)
+    int pr = r - pawnDir;
     if (pr >= 0 && pr < 8)
     {
         if (c - 1 >= 0)

@@ -72,21 +72,47 @@ Move parseMove(char *s)
     return m;
 }
 
-// SIDE EFFECT: filters illegal moves
-bool isMoveLegal(BoardState *board, Move m)
+// Matches user input to a valid legal move from the engine.
+// Returns true if found, and populates *resolvedMove with the correct flags.
+bool resolveMove(BoardState *board, Move inputMove, Move *resolvedMove)
 {
-    MoveList list = {0};
-    // generate legal moves
-    list = generateAllLegalMoves(board);
+    MoveList list = generateAllLegalMoves(board);
 
     for (int i = 0; i < list.count; i++)
     {
-        Move a = list.moves[i];
-        if (a.from.row == m.from.row &&
-            a.from.col == m.from.col &&
-            a.to.row == m.to.row &&
-            a.to.col == m.to.col)
-            return true;
+        Move m = list.moves[i];
+
+        // 1. Check if coordinates match (From -> To)
+        if (m.from.row == inputMove.from.row && m.from.col == inputMove.from.col &&
+            m.to.row == inputMove.to.row && m.to.col == inputMove.to.col)
+        {
+            // 2. Handle Promotion Logic
+            if (m.flag == MOVE_PROMOTION)
+            {
+                // Case A: User requested a specific promotion (e.g., "a7a8r")
+                if (inputMove.flag == MOVE_PROMOTION)
+                {
+                    if (m.promotion == inputMove.promotion)
+                    {
+                        *resolvedMove = m;
+                        return true;
+                    }
+                }
+                // Case B: User typed only coordinates (e.g., "a7a8"). Default to QUEEN.
+                else if (m.promotion == QUEEN)
+                {
+                    *resolvedMove = m;
+                    return true;
+                }
+            }
+            else
+            {
+                // 3. Normal Moves (Castling, En Passant, Regular)
+                // We accept the engine's version because it has the correct flags.
+                *resolvedMove = m;
+                return true;
+            }
+        }
     }
 
     return false;
@@ -123,16 +149,16 @@ int main()
         board.fullmoveNumber = 1;
     }
 
+    // [Inside main()]
     while (1)
     {
         printBoard(&board);
 
-        // Check whose turn
         if (board.currentPlayer == WHITE)
         {
-            printf("\nYour move (e.g. e2e4 or 'save' or 'quit'): ");
+            printf("\nYour move (e.g. e2e4, a7a8q, or 'quit'): ");
             char input[32];
-            scanf("%s", input);
+            scanf("%s", input); //
 
             if (!strcmp(input, "quit"))
                 break;
@@ -143,20 +169,23 @@ int main()
                 continue;
             }
 
-            Move m = parseMove(input);
-            if (m.from.row == -1)
+            Move parsed = parseMove(input); //
+            if (parsed.from.row == -1)
             {
                 printf("Invalid format.\n");
                 continue;
             }
 
-            if (!isMoveLegal(&board, m))
+            // --- CHANGED SECTION START ---
+            Move finalMove;
+            if (!resolveMove(&board, parsed, &finalMove))
             {
                 printf("Illegal move.\n");
                 continue;
             }
 
-            makeMove(&board, m);
+            makeMove(&board, finalMove);
+            // --- CHANGED SECTION END ---
         }
         else
         {
@@ -165,9 +194,32 @@ int main()
 
             if (bm.from.row == -1)
             {
-                printf("No legal moves. Game over.\n");
+                printf("Game over (Checkmate or Stalemate).\n");
                 break;
             }
+
+            // Print what the AI actually played
+            char moveStr[6];
+            // Simple helper to print AI move
+            moveStr[0] = 'a' + bm.from.col;
+            moveStr[1] = '8' - bm.from.row;
+            moveStr[2] = 'a' + bm.to.col;
+            moveStr[3] = '8' - bm.to.row;
+            moveStr[4] = '\0';
+            // Add promotion char if needed
+            if (bm.flag == MOVE_PROMOTION)
+            {
+                char p = 'q';
+                if (bm.promotion == ROOK)
+                    p = 'r';
+                if (bm.promotion == BISHOP)
+                    p = 'b';
+                if (bm.promotion == KNIGHT)
+                    p = 'n';
+                moveStr[4] = p;
+                moveStr[5] = '\0';
+            }
+            printf("AI plays: %s\n", moveStr);
 
             makeMove(&board, bm);
         }
