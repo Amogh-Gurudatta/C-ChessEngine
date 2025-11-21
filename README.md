@@ -10,7 +10,7 @@ A fast, console-based chess engine implemented entirely in C. This project demon
 * **Quiescence Search:** Implemented to mitigate the **Horizon Effect** by only evaluating stable positions after tactical exchanges (captures).  
 * **Move Ordering:** Employs **MVV-LVA (Most Valuable Victim \- Least Valuable Aggressor)** to prioritize critical capture moves, significantly improving Alpha-Beta pruning efficiency.  
 * **Tapered Evaluation:** The evaluation function dynamically switches between a **Middlegame (MG)** score (prioritizing King safety and development) and an **Endgame (EG)** score (prioritizing King activity and Pawn promotion) based on the remaining material.  
-* **Game Persistence:** Ability to **save and load** the current game state (board.txt).
+* **Game Persistence:** Ability to **save and load** the current game state (```board.txt```).
 
 ## **Getting Started**
 
@@ -22,26 +22,34 @@ You need a C compiler (like GCC) and the make utility installed on your system.
 
 The project includes a robust Makefile for compilation.
 
-1. **Clone the repository (if applicable) or ensure all files are in the same directory.**  
+1. **Clone the repository and ensure all files are in the same directory.**  
 2. **Build the Release Version (Optimized):**  
+   ```bash
    make
+   ```
 
-3. **Build the Debug Version (with symbols and no optimization):**  
+4. **Build the Debug Version (with symbols and no optimization):**  
+   ```bash
    make DEBUG=1
+   ```
 
-This will create an executable file named chess\_engine inside the newly created build/ directory.
+This will create an executable file named ```chess\_engine``` inside the newly created ```build/``` directory.
 
 ### **Running the Game**
 
 To start a game immediately after building:  
+```bash
 make run
+```
 
 Alternatively, run the executable directly:  
+```bash
 ./build/chess\_engine
+```
 
 ### **Game Commands**
 
-The engine defaults to a standard starting position if no board.txt file is found. You play as White, and the AI plays as Black.
+The engine defaults to a standard starting position if no ```board.txt``` file is found. You play as White, and the AI plays as Black.
 
 | Command | Description | Example |
 | :---- | :---- | :---- |
@@ -66,7 +74,11 @@ The engine is modularized into several C files, each responsible for a specific 
 ## **Cleaning Up**
 
 To remove all compiled files (build/ directory):  
+```bash
 make clean
+```
 
 To remove compiled files and the save file (board.txt):  
-make distclean  
+```bash
+make distclean
+```
