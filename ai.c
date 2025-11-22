@@ -38,15 +38,16 @@
 /* * SEARCH_DEPTH: The fixed number of half-moves (plies) the engine searches.
  * Depth 4 allows the engine to see 2 full moves ahead for both sides.
  */
-#define SEARCH_DEPTH 4
-#define INFINITY_SCORE 30000 // Must be larger than any possible game score (Mate = ~20000)
+#define SEARCH_DEPTH 6
+#define INFINITY_SCORE 1000000
+#define MATE_VALUE (INFINITY_SCORE - 1000)
 
 /* -------------------------------------------------------------------------- */
 /* INTERNAL FUNCTION PROTOTYPES                        */
 /* -------------------------------------------------------------------------- */
 
 /* Core Search Logic */
-static int negamax(BoardState *board, int depth, int alpha, int beta);
+static int negamax(BoardState *board, int depth, int alpha, int beta, int ply);
 static int quiescence(BoardState *board, int alpha, int beta);
 
 /* Heuristics & Ordering */
@@ -101,7 +102,7 @@ Move findBestMove(BoardState *board)
          * We flip the result because the opponent's score is bad for us.
          * We swap -beta and -alpha to reflect the perspective shift.
          */
-        int val = -negamax(board, SEARCH_DEPTH - 1, -beta, -alpha);
+        int val = -negamax(board, SEARCH_DEPTH - 1, -beta, -alpha, 1);
 
         undoMove(board, currentMove);
 
@@ -196,14 +197,23 @@ static int quiescence(BoardState *board, int alpha, int beta)
  * @param beta Best score minimizer can guarantee.
  * @return The evaluation score relative to the side to move.
  */
-static int negamax(BoardState *board, int depth, int alpha, int beta)
+static int negamax(BoardState *board, int depth, int alpha, int beta, int ply)
 {
     // BASE CASE 1: Draw Rules (50-move rule or Insufficient Material)
     if (board->halfmoveClock >= 100 || isInsufficientMaterial(board))
         return 0;
 
+    // CHECK EXTENSION
+    // If we are in check, we extend the search depth by 1.
+    // This ensures we don't stop searching just before a checkmate.
+    bool inCheck = isKingInCheck(board, board->currentPlayer);
+    if (inCheck)
+    {
+        depth++;
+    }
+
     // BASE CASE 2: Depth Limit Reached -> Enter Quiescence Search
-    if (depth == 0)
+    if (depth <= 0)
         return quiescence(board, alpha, beta);
 
     // Generate Moves
@@ -212,10 +222,10 @@ static int negamax(BoardState *board, int depth, int alpha, int beta)
     // BASE CASE 3: End of Game (Checkmate or Stalemate)
     if (legalMoves.count == 0)
     {
-        if (isKingInCheck(board, board->currentPlayer))
-            // Checkmate: Return -INFINITY + depth.
-            // We add depth so the engine prefers mating in 1 vs mating in 5.
-            return -INFINITY_SCORE + depth;
+        if (inCheck)
+            // Checkmate: Return -MATE + ply.
+            // Faster mates (lower ply) result in higher scores for the winner.
+            return -MATE_VALUE + ply;
         else
             // Stalemate
             return 0;
@@ -232,7 +242,7 @@ static int negamax(BoardState *board, int depth, int alpha, int beta)
         makeMove(board, legalMoves.moves[i]);
 
         // NegaMax Step: Flip alpha/beta, negate result.
-        int score = -negamax(board, depth - 1, -beta, -alpha);
+        int score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
 
         undoMove(board, legalMoves.moves[i]);
 

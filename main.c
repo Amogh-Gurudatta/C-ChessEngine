@@ -1,20 +1,44 @@
+/*
+ * ======================================================================================
+ * File: main.c
+ * Description: The main entry point for the Console Chess Engine.
+ *
+ * Responsibilities:
+ * 1. Game Loop: Manages the flow between Human (White) and AI (Black).
+ * 2. Input Parsing: Converts Algebraic Notation ("e2e4") into engine coordinates.
+ * 3. Output: Displays the board and game status.
+ * 4. Game Over Detection: Checks for Checkmate/Stalemate at the start of every turn.
+ * ======================================================================================
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 #include "structs.h"
 #include "fileio.h"
 #include "game.h"
 #include "ai.h"
+#include "eval.h"
 
-// print board nicely
+/* ========================================================================== */
+/* VISUALIZATION HELPERS                                                      */
+/* ========================================================================== */
+
+/**
+ * @brief Prints the current board state to the console.
+ * Includes Rank numbers (1-8) and File letters (a-h).
+ * Also displays the static evaluation score for debugging purposes.
+ */
 void printBoard(BoardState *board)
 {
     printf("\n   +-----------------+\n");
+    // Iterate Rows from 0 (Rank 8) to 7 (Rank 1)
     for (int r = 0; r < 8; r++)
     {
-        printf(" %d | ", 8 - r);
+        printf(" %d | ", 8 - r); // Print Rank Number
         for (int c = 0; c < 8; c++)
         {
             printf("%c ", pieceToChar(board->squares[r][c]));
@@ -23,35 +47,80 @@ void printBoard(BoardState *board)
     }
     printf("   +-----------------+\n");
     printf("     a b c d e f g h\n");
-    printf("Side to move: %s\n",
-           board->currentPlayer == WHITE ? "White" : "Black");
+
+    // Print Static Evaluation (Positive = White Winning, Negative = Black Winning)
+    int score = evaluateBoard(board);
+    printf("Eval: %d (Positive=White Adv, Negative=Black Adv)\n", score);
+    printf("Side to move: %s\n", board->currentPlayer == WHITE ? "White" : "Black");
 }
 
-// convert algebraic like "e2e4"
+/**
+ * @brief Prints a Move structure in Algebraic notation (e.g., "e2e4").
+ */
+void printMove(Move m)
+{
+    // Convert numeric coordinates back to characters
+    // 'a' + column index, '8' - row index
+    printf("%c%d%c%d", 'a' + m.from.col, 8 - m.from.row, 'a' + m.to.col, 8 - m.to.row);
+
+    // If it's a promotion, append the piece character
+    if (m.flag == MOVE_PROMOTION)
+    {
+        switch (m.promotion)
+        {
+        case QUEEN:
+            printf("q");
+            break;
+        case ROOK:
+            printf("r");
+            break;
+        case BISHOP:
+            printf("b");
+            break;
+        case KNIGHT:
+            printf("n");
+            break;
+        default:
+            break;
+        }
+    }
+    printf("\n");
+}
+
+/* ========================================================================== */
+/* INPUT PARSING & VALIDATION                                                 */
+/* ========================================================================== */
+
+/**
+ * @brief Converts a string like "e2e4" or "a7a8q" into a Move struct.
+ * Note: This creates a "Raw" move. It does not know if the move is castling
+ * or en-passant yet. That requires 'resolveMove'.
+ */
 Move parseMove(char *s)
 {
     Move m;
     m.flag = MOVE_NORMAL;
     m.promotion = EMPTY;
 
+    // Basic validation: Must be at least 4 chars (e.g., "e2e4")
     if (strlen(s) < 4)
     {
-        m.from.row = -1;
+        m.from.row = -1; // Marker for invalid input
         return m;
     }
 
-    int fromC = s[0] - 'a';
-    int fromR = 8 - (s[1] - '0');
-    int toC = s[2] - 'a';
-    int toR = 8 - (s[3] - '0');
+    // Convert 'a'-'h' to 0-7
+    m.from.col = s[0] - 'a';
+    // Convert '8'-'1' to 0-7 (Note: Row 0 is Rank 8)
+    m.from.row = 8 - (s[1] - '0');
+    m.to.col = s[2] - 'a';
+    m.to.row = 8 - (s[3] - '0');
 
-    m.from = (Position){fromR, fromC};
-    m.to = (Position){toR, toC};
-
-    // Check promotion
-    if (strlen(s) == 5)
+    // Check for Promotion suffix (5th character)
+    if (strlen(s) >= 5)
     {
-        switch (tolower(s[4]))
+        char p = (char)tolower(s[4]);
+        switch (p)
         {
         case 'q':
             m.promotion = QUEEN;
@@ -65,6 +134,9 @@ Move parseMove(char *s)
         case 'n':
             m.promotion = KNIGHT;
             break;
+        default:
+            m.promotion = QUEEN;
+            break;
         }
         m.flag = MOVE_PROMOTION;
     }
@@ -72,8 +144,14 @@ Move parseMove(char *s)
     return m;
 }
 
-// Matches user input to a valid legal move from the engine.
-// Returns true if found, and populates *resolvedMove with the correct flags.
+/**
+ * @brief Matches the User's raw input to a specific Legal Move generated by the engine.
+ * * WHY THIS IS NEEDED:
+ * The user types "e1g1". The engine doesn't know if that's a normal move or Castling.
+ * The 'generateAllLegalMoves' function produces moves with the correct flags
+ * (MOVE_CASTLE_KING, MOVE_EN_PASSANT).
+ * We simply search the legal list for a move that matches the Start/End coordinates.
+ */
 bool resolveMove(BoardState *board, Move inputMove, Move *resolvedMove)
 {
     MoveList list = generateAllLegalMoves(board);
@@ -82,66 +160,63 @@ bool resolveMove(BoardState *board, Move inputMove, Move *resolvedMove)
     {
         Move m = list.moves[i];
 
-        // 1. Check if coordinates match (From -> To)
+        // 1. Check if coordinates match
         if (m.from.row == inputMove.from.row && m.from.col == inputMove.from.col &&
             m.to.row == inputMove.to.row && m.to.col == inputMove.to.col)
         {
-            // 2. Handle Promotion Logic
+            // 2. Handling Promotions
             if (m.flag == MOVE_PROMOTION)
             {
-                // Case A: User requested a specific promotion (e.g., "a7a8r")
-                if (inputMove.flag == MOVE_PROMOTION)
+                // Case A: User typed "a7a8" (no suffix). Default to Queen.
+                if (inputMove.promotion == EMPTY)
                 {
-                    if (m.promotion == inputMove.promotion)
+                    if (m.promotion == QUEEN)
                     {
                         *resolvedMove = m;
                         return true;
                     }
                 }
-                // Case B: User typed only coordinates (e.g., "a7a8"). Default to QUEEN.
-                else if (m.promotion == QUEEN)
+                // Case B: User typed "a7a8r" (specific suffix). Match exactly.
+                else if (inputMove.promotion == m.promotion)
                 {
                     *resolvedMove = m;
                     return true;
                 }
             }
+            // 3. Normal Moves (Castling, Standard, En Passant)
             else
             {
-                // 3. Normal Moves (Castling, En Passant, Regular)
-                // We accept the engine's version because it has the correct flags.
                 *resolvedMove = m;
                 return true;
             }
         }
     }
-
+    // Coordinates did not match any legal move
     return false;
 }
+
+/* ========================================================================== */
+/* MAIN LOOP                                                                  */
+/* ========================================================================== */
 
 int main()
 {
     BoardState board;
 
-    // Try to load initial board, else set default
+    // 1. Game Initialization
+    // Try to load a saved game, otherwise set up the standard chess board.
     if (!loadBoardFromFile("board.txt", &board))
     {
-        printf("No board.txt found. Loading standard start.\n");
-
-        // Standard chess position
+        printf("Starting new game.\n");
         const char *start[8] = {
-            "rnbqkbnr",
-            "pppppppp",
-            "........",
-            "........",
-            "........",
-            "........",
-            "PPPPPPPP",
-            "RNBQKBNR"};
-
+            "rnbqkbnr", "pppppppp", "........", "........",
+            "........", "........", "PPPPPPPP", "RNBQKBNR"};
+        // Parse the initial strings into the board array
         for (int r = 0; r < 8; r++)
             for (int c = 0; c < 8; c++)
                 board.squares[r][c] = charToPiece(start[r][c]);
 
+        // Set initial state
         board.currentPlayer = WHITE;
         board.castling = (CastlingRights){1, 1, 1, 1};
         board.enPassantTarget = (Position){-1, -1};
@@ -149,82 +224,96 @@ int main()
         board.fullmoveNumber = 1;
     }
 
-    // [Inside main()]
+    // 2. The Game Loop
     while (1)
     {
         printBoard(&board);
 
+        // ---------------------------------------------------------
+        // STEP 1: CHECK GAME OVER CONDITIONS
+        // ---------------------------------------------------------
+        // We generate all legal moves for the *current* player.
+        // If count is 0, the game is over (Checkmate or Stalemate).
+        MoveList moves = generateAllLegalMoves(&board);
+
+        if (moves.count == 0)
+        {
+            if (isKingInCheck(&board, board.currentPlayer))
+            {
+                // King is in check and has no moves => Checkmate
+                printf("\n============================\n");
+                printf("CHECKMATE! %s wins.\n", board.currentPlayer == WHITE ? "Black (AI)" : "White (You)");
+                printf("============================\n");
+            }
+            else
+            {
+                // King is NOT in check but has no moves => Stalemate
+                printf("\n============================\n");
+                printf("STALEMATE! The game is a draw.\n");
+                printf("============================\n");
+            }
+            break; // Terminate loop
+        }
+
+        // ---------------------------------------------------------
+        // STEP 2: EXECUTE TURNS
+        // ---------------------------------------------------------
         if (board.currentPlayer == WHITE)
         {
-            printf("\nYour move (e.g. e2e4, a7a8q, or 'quit'): ");
+            // --- HUMAN TURN (WHITE) ---
+            printf("\nYour move (e.g. e2e4, quit): ");
             char input[32];
-            scanf("%s", input); //
 
+            // Read input safely
+            if (scanf("%s", input) != 1)
+                break;
+
+            // Check Commands
             if (!strcmp(input, "quit"))
                 break;
             if (!strcmp(input, "save"))
             {
                 saveBoardToFile("board.txt", &board);
-                printf("Saved.\n");
-                continue;
+                printf("Game saved.\n");
+                continue; // Restart loop to let user keep playing
             }
 
-            Move parsed = parseMove(input); //
-            if (parsed.from.row == -1)
-            {
-                printf("Invalid format.\n");
-                continue;
-            }
+            // Parse coordinates
+            Move parsed = parseMove(input);
 
-            // --- CHANGED SECTION START ---
+            // Resolve against legal moves to get flags
             Move finalMove;
-            if (!resolveMove(&board, parsed, &finalMove))
+            if (parsed.from.row != -1 && resolveMove(&board, parsed, &finalMove))
             {
-                printf("Illegal move.\n");
-                continue;
+                makeMove(&board, finalMove);
             }
-
-            makeMove(&board, finalMove);
-            // --- CHANGED SECTION END ---
+            else
+            {
+                printf("Illegal move. Please try again.\n");
+            }
         }
         else
         {
-            printf("\nAI thinking...\n");
-            Move bm = findBestMove(&board);
+            // --- AI TURN (BLACK) ---
+            printf("\nAI is thinking...\n");
 
-            if (bm.from.row == -1)
+            // AI finds the best move
+            Move best = findBestMove(&board);
+
+            // Sanity check: Should never happen if game-over logic above is correct
+            if (best.from.row == -1)
             {
-                printf("Game over (Checkmate or Stalemate).\n");
+                printf("AI resigns (Error or Mate).\n");
                 break;
             }
 
-            // Print what the AI actually played
-            char moveStr[6];
-            // Simple helper to print AI move
-            moveStr[0] = 'a' + bm.from.col;
-            moveStr[1] = '8' - bm.from.row;
-            moveStr[2] = 'a' + bm.to.col;
-            moveStr[3] = '8' - bm.to.row;
-            moveStr[4] = '\0';
-            // Add promotion char if needed
-            if (bm.flag == MOVE_PROMOTION)
-            {
-                char p = 'q';
-                if (bm.promotion == ROOK)
-                    p = 'r';
-                if (bm.promotion == BISHOP)
-                    p = 'b';
-                if (bm.promotion == KNIGHT)
-                    p = 'n';
-                moveStr[4] = p;
-                moveStr[5] = '\0';
-            }
-            printf("AI plays: %s\n", moveStr);
+            printf("AI plays: ");
+            printMove(best);
 
-            makeMove(&board, bm);
+            // Execute AI move
+            makeMove(&board, best);
         }
     }
 
-    printf("Exiting...\n");
     return 0;
 }
