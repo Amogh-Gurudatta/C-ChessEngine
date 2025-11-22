@@ -50,7 +50,7 @@ void printBoard(BoardState *board)
 
     // Print Static Evaluation (Positive = White Winning, Negative = Black Winning)
     int score = evaluateBoard(board);
-    printf("Eval: %d (Positive=White Adv, Negative=Black Adv)\n", score);
+    // printf("Eval: %d (Positive=White Adv, Negative=Black Adv)\n", score);
     printf("Side to move: %s\n", board->currentPlayer == WHITE ? "White" : "Black");
 }
 
