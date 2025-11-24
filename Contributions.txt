@@ -1,3 +1,3 @@
 Amogh Gurudatta [BC2025007] -> AI logic and board evaluation
 Aryan Sujay [IC2025009] -> Game Logic, Board State updation, Legalization of moves and File I/O 
-Vamshidhar [] ->
+Vamshidhar [IC2025030] -> Interface, Board Display, Input Handling
