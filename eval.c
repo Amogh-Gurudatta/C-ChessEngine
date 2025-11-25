@@ -146,7 +146,7 @@ static const int queen_eg[8][8] = {
     {-10, 0, 5, 0, 0, 0, 0, -10},
     {-20, -10, -10, -5, -5, -10, -10, -20}};
 
-// --- KING (The most important change) ---
+// --- KING ---
 // MG: Safety is priority. Corners +20/30. Center -50.
 // EG: Activity is priority. Center +30. Corners -30.
 static const int king_mg[8][8] = {
@@ -180,7 +180,7 @@ static int getTableScore(const int table[8][8], int r, int c, PieceColor color)
     return table[row][col];
 }
 
-// --- Mobility Logic (Same as before) ---
+// --- Mobility Logic ---
 static int countSlidingMoves(BoardState *board, int r, int c, Piece p)
 {
     int count = 0;

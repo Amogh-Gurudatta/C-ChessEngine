@@ -1,10 +1,10 @@
 #ifndef AI_H
 #define AI_H
 
-#include "structs.h" // From Person 1
+#include "structs.h"
 
 /**
- * @brief Finds the best move for the current player using the Minimax algorithm.
+ * @brief Finds the best move for the current player using the Negamax algorithm.
  *
  * This is the main entry point for the AI. It will search to a
  * predefined depth and return the optimal move it finds.

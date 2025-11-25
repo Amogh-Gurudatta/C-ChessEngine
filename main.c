@@ -30,7 +30,6 @@
 /**
  * @brief Prints the current board state to the console.
  * Includes Rank numbers (1-8) and File letters (a-h).
- * Also displays the static evaluation score for debugging purposes.
  */
 void printBoard(BoardState *board)
 {
@@ -48,9 +47,6 @@ void printBoard(BoardState *board)
     printf("   +-----------------+\n");
     printf("     a b c d e f g h\n");
 
-    // Print Static Evaluation (Positive = White Winning, Negative = Black Winning)
-    int score = evaluateBoard(board);
-    // printf("Eval: %d (Positive=White Adv, Negative=Black Adv)\n", score);
     printf("Side to move: %s\n", board->currentPlayer == WHITE ? "White" : "Black");
 }
 

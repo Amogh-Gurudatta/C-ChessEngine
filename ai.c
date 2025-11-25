@@ -36,25 +36,28 @@
 #include "structs.h"
 
 /* * SEARCH_DEPTH: The fixed number of half-moves (plies) the engine searches.
- * Depth 4 allows the engine to see 2 full moves ahead for both sides.
+ * Depth 6 allows the engine to see 3 full moves ahead for both sides.
  */
 #define SEARCH_DEPTH 6
 #define INFINITY_SCORE 1000000
 #define MATE_VALUE (INFINITY_SCORE - 1000)
 
 /* -------------------------------------------------------------------------- */
-/* INTERNAL FUNCTION PROTOTYPES                        */
+/* INTERNAL FUNCTION PROTOTYPES                                               */
 /* -------------------------------------------------------------------------- */
 
 /* Core Search Logic */
+
 static int negamax(BoardState *board, int depth, int alpha, int beta, int ply);
 static int quiescence(BoardState *board, int alpha, int beta);
 
 /* Heuristics & Ordering */
+
 static int scoreMove(BoardState *board, Move m);
 static void scoreMoves(BoardState *board, MoveList *list);
 
 /* Move Generation Helpers (Standard Chess Logic) */
+
 static void generatePseudoLegalMoves(BoardState *board, MoveList *list);
 static void generatePawnMoves(BoardState *board, MoveList *list, int r, int c);
 static void generateKnightMoves(BoardState *board, MoveList *list, int r, int c);
@@ -192,7 +195,7 @@ static int quiescence(BoardState *board, int alpha, int beta)
 
 /**
  * @brief Standard NegaMax Alpha-Beta Search.
- * * @param depth Remaining depth to search.
+ * @param depth Remaining depth to search.
  * @param alpha Best score maximizer can guarantee.
  * @param beta Best score minimizer can guarantee.
  * @return The evaluation score relative to the side to move.
@@ -472,11 +475,13 @@ static void generatePawnMoves(BoardState *board, MoveList *list, int r, int c)
             addMove(board, list, (Move){from, {r + dir, c}, EMPTY, MOVE_NORMAL});
         }
     }
+
     // 2. Double Push
     if (r == startRow && board->squares[r + dir][c].type == EMPTY && board->squares[r + 2 * dir][c].type == EMPTY)
     {
         addMove(board, list, (Move){from, {r + 2 * dir, c}, EMPTY, MOVE_NORMAL});
     }
+    
     // 3. Captures
     int captureCols[] = {c - 1, c + 1};
     for (int i = 0; i < 2; i++)

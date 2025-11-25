@@ -6,11 +6,11 @@
 /*
  * Implementation notes / invariants:
  * - This file keeps an internal history stack to allow undoMove() to restore
- *   previous board state. The history only stores what we need: captured piece,
- *   castling rights, enPassantTarget, halfmove clock and fullmove number and the move flag.
+ * previous board state. The history only stores what we need: captured piece,
+ * castling rights, enPassantTarget, halfmove clock and fullmove number and the move flag.
  *
  * - The layout of BoardState/squares/currentPlayer/castling/enPassantTarget/halfmoveClock
- *   must match the assumptions stated above.
+ * must match the assumptions stated above.
  */
 
 /* ---------- Internal helper types ---------- */
@@ -71,48 +71,6 @@ static Position findKing(BoardState *board, PieceColor color)
                 return (Position){r, c};
         }
     return (Position){-1, -1};
-}
-
-/* Remove castling rights if rook or king moved/captured */
-static void updateCastlingRights_afterMove(BoardState *board, Position from, Position to, Piece movedPiece)
-{
-    // If king moved, remove both castling rights for that side
-    if (movedPiece.type == KING)
-    {
-        if (movedPiece.color == WHITE)
-        {
-            board->castling.wk = 0;
-            board->castling.wq = 0;
-        }
-        else
-        {
-            board->castling.bk = 0;
-            board->castling.bq = 0;
-        }
-    }
-
-    // If rook moved from its original square, remove appropriate right
-    if (movedPiece.type == ROOK)
-    {
-        if (movedPiece.color == WHITE)
-        {
-            if (from.row == 7 && from.col == 0)
-                board->castling.wq = 0;
-            if (from.row == 7 && from.col == 7)
-                board->castling.wk = 0;
-        }
-        else
-        {
-            if (from.row == 0 && from.col == 0)
-                board->castling.bq = 0;
-            if (from.row == 0 && from.col == 7)
-                board->castling.bk = 0;
-        }
-    }
-
-    // If a rook is captured on its original square, remove corresponding right
-    Piece captured = board->squares[to.row][to.col];
-    (void)captured; // captured used in calling code if needed
 }
 
 /* Helper to clear enPassantTarget */
@@ -396,7 +354,7 @@ void undoMove(BoardState *board, Move move)
     else
     {
         // Normal move or promotion
-        Piece destPiece = board->squares[to.row][to.col];
+
         // If promotion happened, current dest holds promoted piece; put pawn back
         if (rec.move.flag == MOVE_PROMOTION)
         {
