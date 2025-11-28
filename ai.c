@@ -596,15 +596,31 @@ static void generateSlidingMoves(BoardState *board, MoveList *list, int r, int c
 // --- Insufficient Material (Draw) ---
 static bool isInsufficientMaterial(BoardState *board)
 {
+    int minorPieceCount = 0;
+
     for (int r = 0; r < 8; r++)
     {
         for (int c = 0; c < 8; c++)
         {
             PieceType type = board->squares[r][c].type;
-            // If we find anything other than a King, game is not drawn yet.
-            if (type != EMPTY && type != KING)
+
+            // If there is a Pawn, Rook, or Queen, checkmate is definitely possible.
+            if (type == PAWN || type == ROOK || type == QUEEN)
                 return false;
+
+            // Count Bishops and Knights
+            if (type == BISHOP || type == KNIGHT)
+                minorPieceCount++;
         }
     }
-    return true;
+
+    // Insufficient Material Scenarios:
+    // 0 Minors: King vs King
+    // 1 Minor:  King + Knight vs King  OR  King + Bishop vs King
+    if (minorPieceCount <= 1)
+        return true;
+
+    // If there are 2 or more minor pieces (e.g., 2 Bishops, or 1 Knight each),
+    // a mate is theoretically possible (or at least not strictly impossible by rule).
+    return false;
 }
