@@ -248,6 +248,10 @@ int main()
                 printf("STALEMATE! The game is a draw.\n");
                 printf("============================\n");
             }
+
+            // Deleteing saved board state, if it exists
+            remove("board.txt");
+
             break; // Terminate loop
         }
 
