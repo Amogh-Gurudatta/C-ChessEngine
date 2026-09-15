@@ -7,7 +7,8 @@ TARGET_EXEC := chess_engine
 CC := gcc
 
 # Directories
-SRC_DIR := .
+SRC_DIR := src
+INCLUDE_DIR := include
 BUILD_DIR := build
 
 # Source files (wildcard selects all .c files in current dir)
@@ -38,7 +39,7 @@ DEP_FLAGS := -MMD -MP
 
 # Final Compiler Flags
 # (Includes directories, warnings, standard, and dependency logic)
-CFLAGS := -I$(SRC_DIR) $(WARNINGS) $(STD_FLAG) $(DEP_FLAGS)
+CFLAGS := -I$(INCLUDE_DIR) $(WARNINGS) $(STD_FLAG) $(DEP_FLAGS)
 
 # Linker flags (if you need -lm for math, add it here)
 LDFLAGS :=
@@ -106,6 +107,17 @@ test: $(TEST_BIN)
 	@echo "Running tests..."
 	@./$(TEST_BIN)
 
+# --- 6. Generated API Documentation ---
+# Needs doxygen installed (not required for anything else in this project).
+# Hand-written docs live in docs/ and don't need this - see docs/README.md.
+
+docs:
+	@command -v doxygen >/dev/null 2>&1 || { echo "doxygen is not installed - see docs/ARCHITECTURE.md"; exit 1; }
+	@mkdir -p $(BUILD_DIR)/docs
+	@echo "Generating API docs..."
+	@doxygen Doxyfile
+	@echo "Open $(BUILD_DIR)/docs/html/index.html"
+
 # --- Helper Targets ---
 
 # Run the game
@@ -130,7 +142,8 @@ help:
 	@echo "  make DEBUG=1  : Build the debug version (with symbols)"
 	@echo "  make run      : Build and run the game"
 	@echo "  make test     : Build and run the unit tests (notation.c: SAN/FEN/PGN)"
+	@echo "  make docs     : Generate HTML API docs into build/docs/html (needs doxygen)"
 	@echo "  make clean    : Remove compiled files"
 	@echo "  make distclean: Remove compiled files along with saved board"
 
-.PHONY: all clean distclean run help test
+.PHONY: all clean distclean run help test docs

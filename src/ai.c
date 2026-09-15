@@ -130,16 +130,11 @@ static void addMove(BoardState *board, MoveList *list, Move move);
 /* 1. ROOT MOVE SEARCH (Entry Point)                                          */
 /* ========================================================================== */
 
-/**
- * @brief Calculates the best move for the current player using iterative-
- * deepening NegaMax: it searches depth 1, then 2, then 3, and so on up to
- * searchDepth, keeping the best move from the last FULLY completed depth.
- * This lets a time cap (setSearchTimeLimit) interrupt the search between (or
- * during) depths and still return a sound move, instead of either blocking
- * indefinitely at a high depth or having no time awareness at all.
- * * @param board The current state of the game board.
- * @return The optimal Move found.
- */
+/* See ai.h for findBestMove's contract. Implementation note: iterative
+ * deepening (depth 1, 2, 3, ... up to searchDepth) is what lets a time cap
+ * (setSearchTimeLimit) interrupt the search between/during depths and
+ * still return a sound move, instead of either blocking indefinitely at a
+ * high depth or having no time awareness at all. */
 Move findBestMove(BoardState *board)
 {
     searchStartTime = clock();
@@ -222,23 +217,10 @@ Move findBestMove(BoardState *board)
 /* 1B. CLOCK-AWARE TIME MANAGEMENT                                           */
 /* ========================================================================== */
 
-/**
- * @brief Decides how many seconds to spend searching THIS move, given how
- * much time is left on the clock, the increment, and the game phase (from
- * eval.h's getGamePhase - 24 near the start, 0 in a bare endgame). This is
- * the same kind of heuristic real engines use: divide the remaining time
- * across an estimate of the moves still to come, bank most of the
- * increment, spend a bit more when the position is still materially
- * complex (the middlegame, where tactics matter most), spend less once
- * the game has simplified down toward a bare endgame, and panic - cutting
- * the budget hard - once the clock is critically low so the engine never
- * flags itself.
- *
- * @param board The current position (used only to read its game phase).
- * @param remainingSeconds Time left on this side's clock.
- * @param incrementSeconds Fischer increment added after each move (0 if none).
- * @return Seconds to allow findBestMove() to spend on this move.
- */
+/* See ai.h for computeMoveTimeBudget's contract. The formula below (bank
+ * most of the increment, weight by game phase, clamp to a safe fraction of
+ * what's left, and panic once critically low) is spelled out step by step
+ * in docs/SEARCH_AND_EVAL.md. */
 double computeMoveTimeBudget(BoardState *board, double remainingSeconds, double incrementSeconds)
 {
     if (remainingSeconds <= 0)
@@ -283,12 +265,7 @@ double computeMoveTimeBudget(BoardState *board, double remainingSeconds, double 
     return budget;
 }
 
-/**
- * @brief Like findBestMove(), but manages its own per-move time budget from
- * the actual clock instead of using whatever setSearchTimeLimit() was last
- * set to. Restores the previous time limit afterward, so using a clock for
- * one game doesn't leave a stray limit behind for unrelated callers.
- */
+/* See ai.h for findBestMoveTimed's contract. */
 Move findBestMoveTimed(BoardState *board, double remainingSeconds, double incrementSeconds)
 {
     double budget = computeMoveTimeBudget(board, remainingSeconds, incrementSeconds);

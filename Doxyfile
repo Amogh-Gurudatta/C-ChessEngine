@@ -1,0 +1,32 @@
+# Minimal Doxygen config for C-ChessEngine.
+# Generate with: make docs   (needs doxygen installed; see docs/ARCHITECTURE.md)
+# Unlisted settings use Doxygen's built-in defaults.
+
+PROJECT_NAME           = "C-ChessEngine"
+PROJECT_BRIEF          = "Console chess engine with SAN/FEN/PGN, Lichess play, and clock-aware search"
+OUTPUT_DIRECTORY       = build/docs
+
+# Source: only the public headers carry the documented API; pull their
+# matching .c files in too so function bodies are browsable, but the
+# headers' docstrings are what actually appear on each page.
+INPUT                  = include src README.md docs
+FILE_PATTERNS          = *.h *.c *.md
+RECURSIVE              = NO
+USE_MDFILE_AS_MAINPAGE = README.md
+
+# This is a C project, not C++; don't guess at classes that don't exist.
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = NO
+
+# HTML only - no LaTeX/man page toolchain required to run "make docs".
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_MAN           = NO
+
+QUIET                  = YES
+# Struct fields are documented in prose on the struct itself (see e.g.
+# structs.h's Position/BoardState) rather than one-by-one; don't warn about
+# that, or about file-private implementation-detail structs (HttpBuffer,
+# StreamState, MoveRecord) that aren't part of the documented API surface.
+WARN_IF_UNDOCUMENTED   = NO

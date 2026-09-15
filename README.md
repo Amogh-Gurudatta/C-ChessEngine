@@ -4,6 +4,8 @@
 
 A high-performance, console-based chess engine written entirely in C. This project showcases efficient board representation, legal move generation, and advanced search algorithms including **NegaMax with Alpha-Beta Pruning**, **Quiescence Search**, and **Tapered Evaluation**.
 
+This README covers building, installing, and playing. For how the engine works internally — module architecture, the search, notation parsing, online play, testing — see **[docs/](docs/README.md)**.
+
 ---
 
 ## **Key Features**
@@ -160,29 +162,43 @@ Moves you type (long algebraic or SAN) are sent to Lichess; your opponent's move
 
 ## **Project Architecture**
 
-| File                    | Role              | Description                                                                   |
-| ----------------------- | ----------------- | ----------------------------------------------------------------------------- |
-| **main.c**              | Entry Point & UI  | Handles board display, input parsing, and the game loop.                      |
-| **structs.h**           | Data Structures   | Defines all core types such as `Piece`, `Move`, `MoveList`, and `BoardState`. |
-| **game.c / game.h**     | Game Logic        | Implements `makeMove`, `undoMove`, attack detection, and rule enforcement.    |
-| **ai.c / ai.h**         | Search Engine     | Contains NegaMax, Alpha-Beta, Quiescence Search, and move generation.         |
-| **eval.c / eval.h**     | Evaluation System | Implements material scoring, PSTs, and tapered MG/EG evaluation.              |
-| **fileio.c / fileio.h** | Persistence Layer | Loads and saves a simplified custom text representation (`board.txt`).       |
-| **notation.c / notation.h** | Notation      | SAN parsing/printing, real FEN import/export, PGN export, long algebraic.     |
-| **timecontrol.c / timecontrol.h** | Chess Clock | Fischer clock bookkeeping (remaining time, increment, flag-fall) shared by local and Lichess play. |
-| **lichess.c / lichess.h** (optional) | Online Play | Board API client for playing a live Lichess game (optionally as a bot) from the terminal. |
+Full write-up (module diagram, data flow, key invariants): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Headers live in `include/`, implementation in `src/`.
+
+| File                    | Role              | Description                                                                   | Docs |
+| ----------------------- | ----------------- | ----------------------------------------------------------------------------- | ---- |
+| **main.c**              | Entry Point & UI  | Handles board display, input parsing, and the game loop.                      | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **structs.h**           | Data Structures   | Defines all core types such as `Piece`, `Move`, `MoveList`, and `BoardState`. | [BOARD_AND_RULES.md](docs/BOARD_AND_RULES.md) |
+| **game.c / game.h**     | Game Logic        | Implements `makeMove`, `undoMove`, attack detection, and rule enforcement.    | [BOARD_AND_RULES.md](docs/BOARD_AND_RULES.md) |
+| **ai.c / ai.h**         | Search Engine     | Contains NegaMax, Alpha-Beta, Quiescence Search, and move generation.         | [SEARCH_AND_EVAL.md](docs/SEARCH_AND_EVAL.md) |
+| **eval.c / eval.h**     | Evaluation System | Implements material scoring, PSTs, and tapered MG/EG evaluation.              | [SEARCH_AND_EVAL.md](docs/SEARCH_AND_EVAL.md) |
+| **fileio.c / fileio.h** | Persistence Layer | Loads and saves a simplified custom text representation (`board.txt`).       | [NOTATION_AND_FORMATS.md](docs/NOTATION_AND_FORMATS.md) |
+| **notation.c / notation.h** | Notation      | SAN parsing/printing, real FEN import/export, PGN export, long algebraic.     | [NOTATION_AND_FORMATS.md](docs/NOTATION_AND_FORMATS.md) |
+| **timecontrol.c / timecontrol.h** | Chess Clock | Fischer clock bookkeeping (remaining time, increment, flag-fall) shared by local and Lichess play. | [ONLINE_PLAY.md](docs/ONLINE_PLAY.md) |
+| **lichess.c / lichess.h** (optional) | Online Play | Board API client for playing a live Lichess game (optionally as a bot) from the terminal. | [ONLINE_PLAY.md](docs/ONLINE_PLAY.md) |
 
 ---
 
 ## **Running Tests**
 
-The project has a lightweight, dependency-free unit test suite covering every module (move generation, `makeMove`/`undoMove`, evaluation, save/load, notation, and the search) except `lichess.c`, which needs a live network connection and account.
+The project has a lightweight, dependency-free unit test suite covering every module (move generation, `makeMove`/`undoMove`, evaluation, save/load, notation, and the search) except `lichess.c`, which needs a live network connection and account. See [docs/TESTING.md](docs/TESTING.md) for what's covered, what isn't, and how to add a new test.
 
 ```bash
 make test
 ```
 
 This builds `build/run_tests` and runs it, printing a pass/fail summary. It includes a [perft](https://www.chessprogramming.org/Perft) check (`perft(3) == 8902` from the starting position), which is a strong end-to-end regression test for the legal move generator.
+
+---
+
+## **Generated API Documentation**
+
+Every header in `include/` carries Doxygen-style docstrings. If you have [Doxygen](https://www.doxygen.nl/) installed:
+
+```bash
+make docs
+```
+
+generates browsable HTML into `build/docs/html/` (open `index.html`). This is separate from — and generated from — the hand-written docs in [docs/](docs/README.md); it's a reference for function-level detail, while `docs/` explains the *why* and how things fit together.
 
 ---
 
