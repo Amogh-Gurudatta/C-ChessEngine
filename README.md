@@ -28,6 +28,17 @@ This README covers building, installing, and playing. For how the engine works i
 
 ---
 
+## **Quick Start**
+
+```bash
+make
+./build/chess_engine
+```
+
+You play **White**; the engine plays **Black**. Type a move (`e4` or `e2e4`), then `quit` whenever you want to stop — that's the entire interface. Everything below is optional extras.
+
+---
+
 ## **Getting Started**
 
 ### **Prerequisites**
@@ -65,98 +76,72 @@ build/chess_engine
 
 ---
 
-## **Running the Engine**
+## **Making Moves**
 
-To build and run in one step:
+Type moves in either notation, interchangeably, move to move:
 
-```bash
-make run
-```
+| Notation | Example | Promotion |
+| --- | --- | --- |
+| Long algebraic | `e2e4` | append the piece letter: `a7a8q` |
+| Standard Algebraic (SAN) | `e4`, `Nf3`, `O-O` | append `=`: `e8=Q` |
 
-Or execute the compiled binary directly:
+Promotion defaults to queen if you don't specify one, in either notation.
 
-```bash
-./build/chess_engine
-```
+## **Commands**
+
+The ones you'll actually use:
+
+| Command | Does |
+| --- | --- |
+| `save` | Save the position to `board.txt`, resuming automatically next time you run the engine |
+| `undo` | Take back your last move and the engine's reply |
+| `resign` | Resign (engine wins) |
+| `draw` | Offer a draw (the engine accepts unless it's clearly ahead) |
+| `quit` | Exit |
+
+The rest are there when you need them — inspecting/editing the position, tuning the AI, or reviewing a game:
+
+| Command | Does |
+| --- | --- |
+| `fen` | Print the current position as a FEN string |
+| `loadfen` | Load a position from a FEN string you paste in |
+| `moves` | Print the game's move list in SAN |
+| `pgn` | Export the game so far to `game.pgn` (also happens automatically when the game ends) |
+| `depth` | View/change the engine's search depth — higher is stronger but slower |
+| `time` | View/change the engine's per-move time budget in seconds (`0` = no cap) |
+
+A game also ends automatically on checkmate, stalemate, the 50-move rule, insufficient material, or threefold repetition — no command needed. The board renders with Unicode chess glyphs, colored automatically in a real terminal (set `NO_COLOR` to turn that off).
 
 ---
 
-## **Gameplay & Commands**
+## **Command-Line Options**
 
-If `board.txt` is not found, the engine loads the standard chess starting position.
-You play as **White**, and the engine plays as **Black**.
+All optional; combine freely.
 
-| Command       | Description                                                  | Example        |
-| ------------- | ------------------------------------------------------------- | -------------- |
-| **Move**      | Play a move in long algebraic notation                        | `e2e4`         |
-| **Move (SAN)**| Or play a move in Standard Algebraic Notation                 | `e4`, `Nf3`, `O-O` |
-| **Promotion** | Append `q`, `r`, `b`, or `n` (long algebraic); `=Q` etc. (SAN); defaults to queen | `a7a8q`, `e8=Q` |
-| **save**      | Save the current position to `board.txt`                      | `save`         |
-| **fen**       | Print the current position as a standard FEN string           | `fen`          |
-| **loadfen**   | Load a position from a FEN string you paste in                | `loadfen`      |
-| **moves**     | Print the game's move list in SAN                              | `moves`        |
-| **pgn**       | Export the game so far to `game.pgn`                           | `pgn`          |
-| **undo**      | Take back your last move (and the engine's reply)              | `undo`         |
-| **depth**     | View or change the engine's search depth (higher = stronger, slower) | `depth`  |
-| **time**      | View or change the engine's per-move time cap in seconds (0 disables it) | `time` |
-| **resign**    | Resign the game (Black/AI wins)                                | `resign`       |
-| **draw**      | Offer a draw; the engine accepts unless it's clearly ahead     | `draw`         |
-| **quit**      | Exit the engine                                                | `quit`         |
+| Flag | Effect | Example |
+| --- | --- | --- |
+| `--fen "<fen>"` | Start from a given position instead of the standard opening (or a saved `board.txt`) | `--fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"` |
+| `--depth <n>` | Set the engine's search depth (default 6) | `--depth 4` |
+| `--time <seconds>` | Set the engine's per-move time budget (default 5s, `0` disables it) | `--time 3` |
+| `--clock <min>+<inc>` | Play under a real Fischer clock instead of a flat time budget — see below | `--clock 5+3` |
+| `--lichess <gameId>` | Play a live Lichess game — needs `make LICHESS=1`, see below | `--lichess abcd1234` |
+| `--bot` | With `--lichess`: have the engine play its own moves | `--lichess abcd1234 --bot` |
 
-A finished game is automatically exported to `game.pgn`. The game ends automatically on checkmate, stalemate, the 50-move rule, insufficient material, or threefold repetition.
+## **Playing With a Real Chess Clock**
 
-You can also start the engine directly from a FEN string, with a custom search depth (default 6 plies), and/or with a per-move time cap in seconds (default 5s; the engine searches iteratively deeper and returns its best move so far once the cap is hit):
-
-```bash
-./build/chess_engine --fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" --depth 4 --time 3
-```
-
-The board is drawn with Unicode chess glyphs, colored automatically when stdout is a real terminal. Set the `NO_COLOR` environment variable to disable the coloring (colors are always off when output is redirected/piped).
-
-### **Playing with a real chess clock**
-
-Add `--clock <minutes>+<increment>` to play under a real Fischer clock — both sides start with the same time, and gain the increment after each move they complete. Running out of time loses the game (a move that arrives after your flag has fallen doesn't count, just like a real clock).
-
-```bash
-./build/chess_engine --clock 5+3   # 5 minutes per side, +3 seconds per move
-./build/chess_engine --clock 10    # 10 minutes per side, no increment
-```
-
-With a clock running, the engine no longer uses `--depth`/`--time` as a flat cap — instead it decides how long to think on each move from how much time is actually left, the increment, and the game phase (spending more in a complex middlegame, less in a simplified endgame, and going into "panic mode" once critically low), the same kind of time management a real chess engine uses.
+`--clock <minutes>+<increment>` (e.g. `--clock 5+3` for 5 minutes with a 3-second increment, or `--clock 10` for no increment) gives both sides a real Fischer clock instead of the flat `--depth`/`--time` budget — running out of time loses the game. Under a clock, the engine decides how long to think each move from how much time is actually left, the increment, and the game phase, the same kind of time management a real chess engine uses. Details: [docs/ONLINE_PLAY.md](docs/ONLINE_PLAY.md).
 
 ---
 
 ## **Playing on Lichess**
 
-The engine can play a live game on [lichess.org](https://lichess.org) from the terminal, using Lichess's [Board API](https://lichess.org/api#tag/Board). This talks to a real Lichess game over HTTP — there's no support for chess.com, since it doesn't offer a live-play API.
+The engine can play a live game on [lichess.org](https://lichess.org) from the terminal via Lichess's [Board API](https://lichess.org/api#tag/Board) (no chess.com support — it has no live-play API to talk to). This is the one feature with an external dependency ([libcurl](https://curl.se/libcurl/)), so it's off by default.
 
-This feature is optional and off by default, since it's the only part of the project with an external dependency ([libcurl](https://curl.se/libcurl/)).
+1. **Build with it enabled:** `make LICHESS=1`
+2. **Get a personal API token** at [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token) (with board-play permission) and export it: `export LICHESS_API_TOKEN=lip_xxxxxxxxxxxx`
+3. **Create or accept a game** on lichess.org, then: `./build/chess_engine --lichess <gameId>`
 
-**1. Build with Lichess support:**
-
-```bash
-make LICHESS=1
-```
-
-**2. Create a personal API token** at [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token) (with board play permission) and export it:
-
-```bash
-export LICHESS_API_TOKEN=lip_xxxxxxxxxxxx
-```
-
-**3. Create or accept a game on lichess.org**, then run the engine with that game's ID:
-
-```bash
-./build/chess_engine --lichess <gameId>
-```
-
-Moves you type (long algebraic or SAN) are sent to Lichess; your opponent's moves are streamed back and applied automatically.
-
-**Bot mode:** add `--bot` to have the engine play its own moves automatically instead of prompting you, using the real time control (`wtime`/`btime`/`winc`/`binc`) Lichess reports for the game — the same clock-aware time management as `--clock` for local play, but driven by the actual match clock instead of a locally-configured one:
-
-```bash
-./build/chess_engine --lichess <gameId> --bot
-```
+Moves you type are relayed to Lichess and the opponent's moves stream back automatically. Add `--bot` to have the engine play both automatically *and* manage its own time against Lichess's real clock for the game, instead of you typing moves yourself. Details: [docs/ONLINE_PLAY.md](docs/ONLINE_PLAY.md).
 
 ---
 
