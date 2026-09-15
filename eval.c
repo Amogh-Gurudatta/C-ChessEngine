@@ -231,13 +231,51 @@ static int countKnightMoves(BoardState *board, int r, int c, Piece p)
     return count;
 }
 
+// --- Game Phase ---
+
+/**
+ * @brief Estimates how far the game has progressed from opening (24) toward
+ * a bare endgame (0), counting only knights/bishops/rooks/queens still on
+ * the board (weighted the same as the tapered-eval phase blend below).
+ * Exposed via eval.h so callers other than evaluateBoard (e.g. the AI's
+ * time manager) can use the same "how much material/complexity is left"
+ * signal without duplicating this logic.
+ */
+int getGamePhase(BoardState *board)
+{
+    int gamePhase = 0;
+    for (int r = 0; r < 8; r++)
+    {
+        for (int c = 0; c < 8; c++)
+        {
+            switch (board->squares[r][c].type)
+            {
+            case KNIGHT:
+            case BISHOP:
+                gamePhase += 1;
+                break;
+            case ROOK:
+                gamePhase += 2;
+                break;
+            case QUEEN:
+                gamePhase += 4;
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    if (gamePhase > PHASE_TOTAL)
+        gamePhase = PHASE_TOTAL;
+    return gamePhase;
+}
+
 // --- Main Evaluation ---
 
 int evaluateBoard(BoardState *board)
 {
     int mgScore = 0;
     int egScore = 0;
-    int gamePhase = 0;
 
     // 1. Iterate Board
     for (int r = 0; r < 8; r++)
@@ -247,27 +285,7 @@ int evaluateBoard(BoardState *board)
             Piece p = board->squares[r][c];
             if (p.type != EMPTY)
             {
-                // A. Update Game Phase
-                // We only count major pieces for phase calculation
-                switch (p.type)
-                {
-                case KNIGHT:
-                    gamePhase += 1;
-                    break;
-                case BISHOP:
-                    gamePhase += 1;
-                    break;
-                case ROOK:
-                    gamePhase += 2;
-                    break;
-                case QUEEN:
-                    gamePhase += 4;
-                    break;
-                default:
-                    break;
-                }
-
-                // B. Calculate Material & Mobility
+                // A. Calculate Material & Mobility
                 int m_val = 0, e_val = 0;
                 m_val = mg_value[p.type];
                 e_val = eg_value[p.type];
@@ -327,11 +345,7 @@ int evaluateBoard(BoardState *board)
     }
 
     // 2. Tapered Evaluation Formula
-    // Cap gamePhase at 24
-    if (gamePhase > PHASE_TOTAL)
-        gamePhase = PHASE_TOTAL;
-
-    int mgWeight = gamePhase;
+    int mgWeight = getGamePhase(board);
     int egWeight = PHASE_TOTAL - mgWeight;
 
     // Final Score = (MG_Score * Phase + EG_Score * (24 - Phase)) / 24

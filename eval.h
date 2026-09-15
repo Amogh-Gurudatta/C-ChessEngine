@@ -16,4 +16,12 @@
  */
 int evaluateBoard(BoardState *board);
 
+/**
+ * @brief How far the game has progressed materially, from 24 (full opening
+ * material) down to 0 (bare kings). Used both to taper evaluateBoard's
+ * middlegame/endgame blend and, externally, as a game-phase signal for the
+ * AI's time management (ai.h's findBestMoveTimed).
+ */
+int getGamePhase(BoardState *board);
+
 #endif // EVAL_H

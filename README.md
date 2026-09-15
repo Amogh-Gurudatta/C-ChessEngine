@@ -17,6 +17,7 @@ A high-performance, console-based chess engine written entirely in C. This proje
   * **Quiescence Search** to reduce the horizon effect
   * **MVV-LVA move ordering** to improve pruning efficiency
 * **Adjustable Difficulty:** Search depth and/or a per-move time budget can be set from the command line or mid-game.
+* **Real Chess Clocks:** Fischer-style clocks (time + increment) for both sides, with the engine managing its own thinking time based on time left, increment, and game phase — like a real chess engine, not a flat per-move cap.
 * **Tapered Evaluation:** Blends **Middlegame (MG)** and **Endgame (EG)** heuristics dynamically based on remaining material.
 * **Game Persistence:** Save and load game states through a simple `board.txt` file.
 * **Full Draw Detection:** Checkmate, stalemate, the 50-move rule, insufficient material, and threefold repetition are all detected and end the game automatically.
@@ -110,6 +111,17 @@ You can also start the engine directly from a FEN string, with a custom search d
 
 The board is drawn with Unicode chess glyphs, colored automatically when stdout is a real terminal. Set the `NO_COLOR` environment variable to disable the coloring (colors are always off when output is redirected/piped).
 
+### **Playing with a real chess clock**
+
+Add `--clock <minutes>+<increment>` to play under a real Fischer clock — both sides start with the same time, and gain the increment after each move they complete. Running out of time loses the game (a move that arrives after your flag has fallen doesn't count, just like a real clock).
+
+```bash
+./build/chess_engine --clock 5+3   # 5 minutes per side, +3 seconds per move
+./build/chess_engine --clock 10    # 10 minutes per side, no increment
+```
+
+With a clock running, the engine no longer uses `--depth`/`--time` as a flat cap — instead it decides how long to think on each move from how much time is actually left, the increment, and the game phase (spending more in a complex middlegame, less in a simplified endgame, and going into "panic mode" once critically low), the same kind of time management a real chess engine uses.
+
 ---
 
 ## **Playing on Lichess**
@@ -138,6 +150,12 @@ export LICHESS_API_TOKEN=lip_xxxxxxxxxxxx
 
 Moves you type (long algebraic or SAN) are sent to Lichess; your opponent's moves are streamed back and applied automatically.
 
+**Bot mode:** add `--bot` to have the engine play its own moves automatically instead of prompting you, using the real time control (`wtime`/`btime`/`winc`/`binc`) Lichess reports for the game — the same clock-aware time management as `--clock` for local play, but driven by the actual match clock instead of a locally-configured one:
+
+```bash
+./build/chess_engine --lichess <gameId> --bot
+```
+
 ---
 
 ## **Project Architecture**
@@ -151,7 +169,8 @@ Moves you type (long algebraic or SAN) are sent to Lichess; your opponent's move
 | **eval.c / eval.h**     | Evaluation System | Implements material scoring, PSTs, and tapered MG/EG evaluation.              |
 | **fileio.c / fileio.h** | Persistence Layer | Loads and saves a simplified custom text representation (`board.txt`).       |
 | **notation.c / notation.h** | Notation      | SAN parsing/printing, real FEN import/export, PGN export, long algebraic.     |
-| **lichess.c / lichess.h** (optional) | Online Play | Board API client for playing a live Lichess game from the terminal.          |
+| **timecontrol.c / timecontrol.h** | Chess Clock | Fischer clock bookkeeping (remaining time, increment, flag-fall) shared by local and Lichess play. |
+| **lichess.c / lichess.h** (optional) | Online Play | Board API client for playing a live Lichess game (optionally as a bot) from the terminal. |
 
 ---
 

@@ -89,7 +89,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 
 TEST_SRCS := $(wildcard tests/*.c)
 TEST_OBJS := $(BUILD_DIR)/notation.o $(BUILD_DIR)/ai.o $(BUILD_DIR)/game.o \
-             $(BUILD_DIR)/eval.o $(BUILD_DIR)/fileio.o \
+             $(BUILD_DIR)/eval.o $(BUILD_DIR)/fileio.o $(BUILD_DIR)/timecontrol.o \
              $(TEST_SRCS:tests/%.c=$(BUILD_DIR)/tests/%.o)
 TEST_BIN := $(BUILD_DIR)/run_tests
 

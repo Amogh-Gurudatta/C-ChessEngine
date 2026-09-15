@@ -3,6 +3,7 @@
 #include "game.h"
 #include "notation.h"
 #include "fileio.h"
+#include "ai.h"
 
 #include <curl/curl.h>
 #include <stdio.h>
@@ -50,6 +51,26 @@ static bool jsonFindNestedString(const char *json, const char *outerKey, const c
     if (p == NULL)
         return false;
     return jsonFindString(p, innerKey, out, outSize);
+}
+
+/* Numeric fields (wtime/btime/winc/binc are plain milliseconds, e.g.
+ * "wtime":180000) aren't quoted, so they need their own extractor. */
+static bool jsonFindNumber(const char *json, const char *key, double *out)
+{
+    char pattern[64];
+    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    const char *p = strstr(json, pattern);
+    if (p == NULL)
+        return false;
+    p += strlen(pattern);
+
+    char *end = NULL;
+    double value = strtod(p, &end);
+    if (end == p)
+        return false;
+
+    *out = value;
+    return true;
 }
 
 /* ---------------- HTTP plumbing ---------------- */
@@ -122,12 +143,31 @@ typedef struct
     bool foundNewMove;
     char status[32];
     bool statusChanged;
+    /* Real Lichess clock, in milliseconds, from the most recent gameState
+     * message seen (present on both the initial gameFull.state and every
+     * subsequent stream update). */
+    double wtimeMs, btimeMs, wincMs, bincMs;
+    bool hasClockInfo;
 } StreamState;
 
 static void processStreamLine(const char *line, StreamState *state)
 {
     if (line[0] == '\0')
         return;
+
+    double wtime, btime;
+    if (jsonFindNumber(line, "wtime", &wtime) && jsonFindNumber(line, "btime", &btime))
+    {
+        state->wtimeMs = wtime;
+        state->btimeMs = btime;
+        state->hasClockInfo = true;
+
+        double winc, binc;
+        if (jsonFindNumber(line, "winc", &winc))
+            state->wincMs = winc;
+        if (jsonFindNumber(line, "binc", &binc))
+            state->bincMs = binc;
+    }
 
     char movesStr[4096];
     if (jsonFindString(line, "moves", movesStr, sizeof(movesStr)))
@@ -245,7 +285,7 @@ bool lichessGetToken(char *buf, size_t bufSize)
     return true;
 }
 
-void playLichessGame(const char *gameId)
+void playLichessGame(const char *gameId, bool botMode)
 {
     char token[128];
     if (!lichessGetToken(token, sizeof(token)))
@@ -352,22 +392,45 @@ void playLichessGame(const char *gameId)
         snprintf(status, sizeof(status), "%s", initial.status);
     }
 
+    // Real Lichess clock, if the game has one; botMode uses this (via
+    // findBestMoveTimed) instead of guessing at a time budget.
+    bool haveRealClock = initial.hasClockInfo;
+    double whiteMs = initial.wtimeMs, blackMs = initial.btimeMs;
+    double whiteIncMs = initial.wincMs, blackIncMs = initial.bincMs;
+
+    if (botMode)
+        printf("Bot mode: the engine will play %s's moves automatically.\n",
+               myColor == WHITE ? "White" : "Black");
+
     while (strcmp(status, "started") == 0)
     {
         printBoard(&board);
 
         if (board.currentPlayer == myColor)
         {
-            printf("\nYour move (e.g. e2e4, e4, Nf3): ");
-            char input[32];
-            if (scanf("%31s", input) != 1)
-                break;
-
             Move finalMove;
-            if (!parseUserMove(&board, input, &finalMove))
+
+            if (botMode)
             {
-                printf("Illegal move. Please try again.\n");
-                continue;
+                double myRemainingSeconds = ((myColor == WHITE) ? whiteMs : blackMs) / 1000.0;
+                double myIncSeconds = ((myColor == WHITE) ? whiteIncMs : blackIncMs) / 1000.0;
+
+                finalMove = haveRealClock
+                                ? findBestMoveTimed(&board, myRemainingSeconds, myIncSeconds)
+                                : findBestMove(&board);
+            }
+            else
+            {
+                printf("\nYour move (e.g. e2e4, e4, Nf3): ");
+                char input[32];
+                if (scanf("%31s", input) != 1)
+                    break;
+
+                if (!parseUserMove(&board, input, &finalMove))
+                {
+                    printf("Illegal move. Please try again.\n");
+                    continue;
+                }
             }
 
             char uci[8];
@@ -383,6 +446,9 @@ void playLichessGame(const char *gameId)
                 continue;
             }
 
+            if (botMode)
+                printf("Bot plays: %s\n", uci);
+
             makeMove(&board, finalMove);
             appliedCount++;
         }
@@ -394,6 +460,15 @@ void playLichessGame(const char *gameId)
             {
                 printf("Lost connection to game stream.\n");
                 break;
+            }
+
+            if (next.hasClockInfo)
+            {
+                haveRealClock = true;
+                whiteMs = next.wtimeMs;
+                blackMs = next.btimeMs;
+                whiteIncMs = next.wincMs;
+                blackIncMs = next.bincMs;
             }
 
             if (next.foundNewMove)

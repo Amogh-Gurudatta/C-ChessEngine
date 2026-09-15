@@ -34,4 +34,11 @@ int getSearchDepth(void);
 void setSearchTimeLimit(double seconds);
 double getSearchTimeLimit(void);
 
+/* Clock-aware move selection: computes how many seconds to spend on this
+ * move from the actual remaining time, increment, and game phase (see
+ * ai.c for the reasoning), then searches within that budget. Use this
+ * instead of findBestMove() when the game is played under a real clock. */
+double computeMoveTimeBudget(BoardState *board, double remainingSeconds, double incrementSeconds);
+Move findBestMoveTimed(BoardState *board, double remainingSeconds, double incrementSeconds);
+
 #endif // AI_H

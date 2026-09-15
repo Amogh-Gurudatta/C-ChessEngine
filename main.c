@@ -17,6 +17,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "structs.h"
 #include "fileio.h"
@@ -24,6 +25,7 @@
 #include "ai.h"
 #include "eval.h"
 #include "notation.h"
+#include "timecontrol.h"
 #ifdef LICHESS_ENABLED
 #include "lichess.h"
 #endif
@@ -169,6 +171,37 @@ static const char *findArgValue(int argc, char *argv[], const char *flag)
 }
 
 /* ========================================================================== */
+/* CHESS CLOCK HELPERS                                                        */
+/* ========================================================================== */
+
+/**
+ * @brief Parses a "--clock" spec like "5+3" (5 minutes + 3s increment) or
+ * plain "10" (10 minutes, no increment) into seconds.
+ */
+static bool parseClockSpec(const char *spec, double *outStartSeconds, double *outIncrementSeconds)
+{
+    double minutes = atof(spec);
+    if (minutes <= 0)
+        return false;
+
+    const char *plusPos = strchr(spec, '+');
+    *outStartSeconds = minutes * 60.0;
+    *outIncrementSeconds = (plusPos != NULL) ? atof(plusPos + 1) : 0.0;
+    return true;
+}
+
+/**
+ * @brief Prints both sides' remaining clock time under the board.
+ */
+static void printClocks(ChessClock *matchClock)
+{
+    char whiteBuf[16], blackBuf[16];
+    clockFormat(matchClock->whiteSeconds, whiteBuf, sizeof(whiteBuf));
+    clockFormat(matchClock->blackSeconds, blackBuf, sizeof(blackBuf));
+    printf("Clock - White: %s   Black: %s\n", whiteBuf, blackBuf);
+}
+
+/* ========================================================================== */
 /* MAIN LOOP                                                                  */
 /* ========================================================================== */
 
@@ -194,11 +227,34 @@ int main(int argc, char *argv[])
             printf("Ignoring invalid --time value; must be a positive number of seconds.\n");
     }
 
+    bool clockEnabled = false;
+    ChessClock matchClock;
+    const char *clockArg = findArgValue(argc, argv, "--clock");
+    if (clockArg != NULL)
+    {
+        double startSeconds, incrementSeconds;
+        if (parseClockSpec(clockArg, &startSeconds, &incrementSeconds))
+        {
+            clockInit(&matchClock, startSeconds, incrementSeconds);
+            clockEnabled = true;
+        }
+        else
+        {
+            printf("Ignoring invalid --clock value; expected e.g. \"5+3\" or \"10\".\n");
+        }
+    }
+
 #ifdef LICHESS_ENABLED
     const char *lichessGameId = findArgValue(argc, argv, "--lichess");
     if (lichessGameId != NULL)
     {
-        playLichessGame(lichessGameId);
+        bool botMode = false;
+        for (int i = 1; i < argc; i++)
+        {
+            if (!strcmp(argv[i], "--bot"))
+                botMode = true;
+        }
+        playLichessGame(lichessGameId, botMode);
         return 0;
     }
 #endif
@@ -249,10 +305,16 @@ int main(int argc, char *argv[])
     boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
     boardToFen(&board, fenHistory[fenHistoryCount++], FEN_MAX_LEN);
 
+    // Wall-clock timestamp for whichever side's turn is currently running;
+    // only reset when a move actually completes (not on every command).
+    time_t turnStartTime = time(NULL);
+
     // 2. The Game Loop
     while (1)
     {
         printBoard(&board);
+        if (clockEnabled)
+            printClocks(&matchClock);
 
         // ---------------------------------------------------------
         // STEP 1: CHECK GAME OVER CONDITIONS
@@ -505,6 +567,24 @@ int main(int argc, char *argv[])
             Move finalMove;
             if (parseUserMove(&board, input, &finalMove))
             {
+                // Check the clock BEFORE committing the move: if time had
+                // already run out by the moment this move arrived, it
+                // doesn't count - the game is simply lost on time, exactly
+                // like a physical clock's flag falling before you press it.
+                if (clockEnabled)
+                {
+                    double elapsed = difftime(time(NULL), turnStartTime);
+                    if (!clockConsume(&matchClock, WHITE, elapsed))
+                    {
+                        printf("\n============================\n");
+                        printf("TIME! You ran out of time. Black (AI) wins.\n");
+                        printf("============================\n");
+                        result = "0-1";
+                        remove("board.txt");
+                        break;
+                    }
+                }
+
                 if (sanCount < 1024)
                     moveToSan(&board, finalMove, sanLog[sanCount], SAN_MAX_LEN);
                 makeMove(&board, finalMove);
@@ -514,6 +594,8 @@ int main(int argc, char *argv[])
                     boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
                 if (fenHistoryCount < MAX_POSITION_HISTORY)
                     boardToFen(&board, fenHistory[fenHistoryCount++], FEN_MAX_LEN);
+
+                turnStartTime = time(NULL);
             }
             else
             {
@@ -525,14 +607,35 @@ int main(int argc, char *argv[])
             // --- AI TURN (BLACK) ---
             printf("\nAI is thinking...\n");
 
-            // AI finds the best move
-            Move best = findBestMove(&board);
+            // AI finds the best move: clock-aware (budgets its own thinking
+            // time from the real clock) when a clock is running, or a plain
+            // fixed-depth/fixed-cap search otherwise.
+            Move best = clockEnabled
+                             ? findBestMoveTimed(&board, matchClock.blackSeconds, matchClock.incrementSeconds)
+                             : findBestMove(&board);
 
             // Sanity check: Should never happen if game-over logic above is correct
             if (best.from.row == -1)
             {
                 printf("AI resigns (Error or Mate).\n");
                 break;
+            }
+
+            // Check the clock BEFORE committing the move, for the same
+            // reason as the human branch above: a move found after the
+            // flag has already fallen doesn't count.
+            if (clockEnabled)
+            {
+                double elapsed = difftime(time(NULL), turnStartTime);
+                if (!clockConsume(&matchClock, BLACK, elapsed))
+                {
+                    printf("\n============================\n");
+                    printf("TIME! The AI ran out of time. White (You) wins.\n");
+                    printf("============================\n");
+                    result = "1-0";
+                    remove("board.txt");
+                    break;
+                }
             }
 
             char sanBuf[SAN_MAX_LEN];
@@ -548,6 +651,8 @@ int main(int argc, char *argv[])
                 boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
             if (fenHistoryCount < MAX_POSITION_HISTORY)
                 boardToFen(&board, fenHistory[fenHistoryCount++], FEN_MAX_LEN);
+
+            turnStartTime = time(NULL);
         }
     }
 

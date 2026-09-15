@@ -219,6 +219,91 @@ Move findBestMove(BoardState *board)
 }
 
 /* ========================================================================== */
+/* 1B. CLOCK-AWARE TIME MANAGEMENT                                           */
+/* ========================================================================== */
+
+/**
+ * @brief Decides how many seconds to spend searching THIS move, given how
+ * much time is left on the clock, the increment, and the game phase (from
+ * eval.h's getGamePhase - 24 near the start, 0 in a bare endgame). This is
+ * the same kind of heuristic real engines use: divide the remaining time
+ * across an estimate of the moves still to come, bank most of the
+ * increment, spend a bit more when the position is still materially
+ * complex (the middlegame, where tactics matter most), spend less once
+ * the game has simplified down toward a bare endgame, and panic - cutting
+ * the budget hard - once the clock is critically low so the engine never
+ * flags itself.
+ *
+ * @param board The current position (used only to read its game phase).
+ * @param remainingSeconds Time left on this side's clock.
+ * @param incrementSeconds Fischer increment added after each move (0 if none).
+ * @return Seconds to allow findBestMove() to spend on this move.
+ */
+double computeMoveTimeBudget(BoardState *board, double remainingSeconds, double incrementSeconds)
+{
+    if (remainingSeconds <= 0)
+        return 0.02; // already effectively out of time; still must return *some* move
+
+    int phase = getGamePhase(board); // 0 (bare kings) .. 24 (full material)
+
+    // More material on the board generally means more moves are likely still
+    // to be played; bare endgames tend to resolve faster (often forced).
+    int movesToGo = 20 + (phase * 20) / 24; // ranges 20 (bare) .. 40 (full material)
+
+    double budget = (remainingSeconds / movesToGo) + (incrementSeconds * 0.8);
+
+    // The richest tactical complexity is usually in the middlegame, so spend
+    // a bit more there; spend less once things have simplified toward a bare
+    // endgame, where play is often more forced and needs less calculation.
+    double phaseFactor = 1.0;
+    if (phase >= 8 && phase <= 20)
+        phaseFactor = 1.2;
+    else if (phase < 4)
+        phaseFactor = 0.7;
+    budget *= phaseFactor;
+
+    // Never risk more than a safe fraction of what's left on a single move.
+    double maxSafe = remainingSeconds * 0.4;
+    if (budget > maxSafe)
+        budget = maxSafe;
+
+    // Panic mode: once critically low on time, spend only a sliver of it so
+    // there's always time left to make the next several moves too.
+    const double panicThresholdSeconds = 5.0;
+    if (remainingSeconds < panicThresholdSeconds)
+    {
+        double panicBudget = remainingSeconds * 0.2;
+        if (budget > panicBudget)
+            budget = panicBudget;
+    }
+
+    if (budget < 0.02)
+        budget = 0.02;
+
+    return budget;
+}
+
+/**
+ * @brief Like findBestMove(), but manages its own per-move time budget from
+ * the actual clock instead of using whatever setSearchTimeLimit() was last
+ * set to. Restores the previous time limit afterward, so using a clock for
+ * one game doesn't leave a stray limit behind for unrelated callers.
+ */
+Move findBestMoveTimed(BoardState *board, double remainingSeconds, double incrementSeconds)
+{
+    double budget = computeMoveTimeBudget(board, remainingSeconds, incrementSeconds);
+
+    double previousLimit = searchTimeLimitSeconds;
+    setSearchTimeLimit(budget);
+
+    Move best = findBestMove(board);
+
+    setSearchTimeLimit(previousLimit);
+
+    return best;
+}
+
+/* ========================================================================== */
 /* 2. PURE NEGAMAX SEARCH ALGORITHMS                                          */
 /* ========================================================================== */
 

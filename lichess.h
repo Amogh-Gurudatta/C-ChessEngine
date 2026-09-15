@@ -11,7 +11,11 @@ bool lichessGetToken(char *buf, size_t bufSize);
  * Board API (https://lichess.org/api#tag/Board). The user must create
  * or accept the game on lichess.org first and supply its game ID.
  * Owns its own I/O loop; returns when the game ends or a fatal error
- * occurs, printing diagnostics to stdout/stderr as it goes. */
-void playLichessGame(const char *gameId);
+ * occurs, printing diagnostics to stdout/stderr as it goes.
+ *
+ * When botMode is true, the engine plays its own moves automatically
+ * (via the clock-aware findBestMoveTimed, using the real wtime/btime/
+ * winc/binc Lichess reports) instead of reading them from stdin. */
+void playLichessGame(const char *gameId, bool botMode);
 
 #endif // LICHESS_H
