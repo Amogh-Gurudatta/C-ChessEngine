@@ -111,4 +111,29 @@ double computeMoveTimeBudget(BoardState *board, double remainingSeconds, double 
  */
 Move findBestMoveTimed(BoardState *board, double remainingSeconds, double incrementSeconds);
 
+/**
+ * @brief Enables or disables the transposition table (a Zobrist-hash-keyed
+ * cache of previously-searched positions; see docs/SEARCH_AND_EVAL.md).
+ * Enabled by default. Disabling it never changes what move is found for a
+ * completed, uncapped search - only how many nodes it takes to get there -
+ * so this is mainly useful for testing/comparing that effect, or as a
+ * fallback if it's ever suspected of causing a problem.
+ *
+ * @param enabled Whether the transposition table should be used.
+ */
+void setUseTranspositionTable(bool enabled);
+
+/** @return Whether the transposition table is currently enabled. */
+bool getUseTranspositionTable(void);
+
+/**
+ * @brief How many nodes (negamax + quiescence calls) the most recent
+ * findBestMove()/findBestMoveTimed() call visited. A diagnostic - useful
+ * for observing how much the transposition table and move ordering reduce
+ * the search space - not used by the search itself.
+ *
+ * @return The node count from the last completed search.
+ */
+long getLastSearchNodeCount(void);
+
 #endif // AI_H

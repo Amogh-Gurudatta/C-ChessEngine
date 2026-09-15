@@ -28,6 +28,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 #include <limits.h>
 #include <time.h>
 
@@ -103,6 +105,249 @@ static bool searchShouldStop(void)
     return searchAborted;
 }
 
+/* Total nodes visited (negamax + quiescence calls) during the most recent
+ * findBestMove()/findBestMoveTimed() call. A diagnostic, not used for any
+ * search decision - mainly so the transposition table's effect (fewer
+ * nodes for the same depth) can actually be observed/tested. */
+static long nodesSearched = 0;
+
+long getLastSearchNodeCount(void)
+{
+    return nodesSearched;
+}
+
+/* ========================================================================== */
+/* TRANSPOSITION TABLE (Zobrist hashing)                                     */
+/* ========================================================================== */
+/* See docs/SEARCH_AND_EVAL.md for the design rationale (why the hash is
+ * recomputed from scratch each node instead of maintained incrementally,
+ * why quiescence() doesn't use it, and the mate-score ply-adjustment). */
+
+#define ZOBRIST_SEED 0x2545F4914F6CDD1DULL
+
+static uint64_t zobristPieceSquare[2][7][64]; /* [color][PieceType][row*8+col]; index 0 (EMPTY) unused */
+static uint64_t zobristSideToMove;
+static uint64_t zobristCastling[4]; /* wk, wq, bk, bq */
+static uint64_t zobristEnPassantFile[8];
+static bool zobristInitialized = false;
+
+/* A small, fixed-seed PRNG (splitmix64) so Zobrist keys - and therefore
+ * every search result - are fully reproducible from run to run. This
+ * matters for tests: a time-seeded PRNG could (rarely, among otherwise
+ * equal-scoring moves) make the engine's move ordering, and hence its
+ * choice among ties, non-deterministic. */
+static uint64_t splitmix64Next(uint64_t *state)
+{
+    uint64_t z = (*state += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
+static void zobristEnsureInit(void)
+{
+    if (zobristInitialized)
+        return;
+
+    uint64_t state = ZOBRIST_SEED;
+    for (int color = 0; color < 2; color++)
+        for (int type = 0; type < 7; type++)
+            for (int sq = 0; sq < 64; sq++)
+                zobristPieceSquare[color][type][sq] = splitmix64Next(&state);
+
+    zobristSideToMove = splitmix64Next(&state);
+    for (int i = 0; i < 4; i++)
+        zobristCastling[i] = splitmix64Next(&state);
+    for (int i = 0; i < 8; i++)
+        zobristEnPassantFile[i] = splitmix64Next(&state);
+
+    zobristInitialized = true;
+}
+
+/* Recomputed from scratch each call (a plain 64-square scan) rather than
+ * maintained incrementally inside makeMove()/undoMove(). That's slower per
+ * node in isolation, but far simpler and safer: an incrementally-updated
+ * hash has to be threaded through every one of makeMove's special cases
+ * (castling, en passant, promotion, captured rooks revoking rights, ...)
+ * and silently drifting out of sync there would cause wrong-but-plausible
+ * search results that are extremely hard to notice, let alone debug. */
+static uint64_t zobristHash(BoardState *board)
+{
+    zobristEnsureInit();
+
+    uint64_t hash = 0;
+    for (int r = 0; r < 8; r++)
+    {
+        for (int c = 0; c < 8; c++)
+        {
+            Piece p = board->squares[r][c];
+            if (p.type != EMPTY)
+                hash ^= zobristPieceSquare[p.color][p.type][r * 8 + c];
+        }
+    }
+
+    if (board->currentPlayer == BLACK)
+        hash ^= zobristSideToMove;
+    if (board->castling.wk)
+        hash ^= zobristCastling[0];
+    if (board->castling.wq)
+        hash ^= zobristCastling[1];
+    if (board->castling.bk)
+        hash ^= zobristCastling[2];
+    if (board->castling.bq)
+        hash ^= zobristCastling[3];
+    if (board->enPassantTarget.row != -1)
+        hash ^= zobristEnPassantFile[board->enPassantTarget.col];
+
+    return hash;
+}
+
+typedef enum
+{
+    TT_FLAG_EXACT,
+    TT_FLAG_LOWERBOUND,
+    TT_FLAG_UPPERBOUND
+} TTFlag;
+
+typedef struct
+{
+    uint64_t key;
+    int depth;
+    int score;
+    TTFlag flag;
+    Move bestMove;
+    bool occupied;
+} TTEntry;
+
+/* 2^18 entries (~12MB). Power-of-two sized so the index is a cheap mask
+ * instead of a modulo. */
+#define TT_SIZE_BITS 18
+#define TT_SIZE (1u << TT_SIZE_BITS)
+#define TT_INDEX_MASK (TT_SIZE - 1)
+
+static TTEntry transpositionTable[TT_SIZE];
+static bool useTranspositionTable = true;
+
+void setUseTranspositionTable(bool enabled)
+{
+    useTranspositionTable = enabled;
+}
+
+bool getUseTranspositionTable(void)
+{
+    return useTranspositionTable;
+}
+
+/* Mate scores (see MATE_VALUE above) encode "distance to mate from the
+ * root of the CURRENT search call" by construction (negamax returns
+ * -MATE_VALUE + ply at a mated leaf). That makes them meaningless once
+ * cached: the same position reached at a different ply - via a different
+ * move order, or in a later search entirely - would wrongly inherit a
+ * mate distance measured from a different root. Converting to/from a
+ * ply-independent form before storing/after loading (the standard
+ * transposition-table technique) fixes this: two calls that cancel out
+ * whenever the value is used at the SAME ply it was computed at, but
+ * correctly re-relativize it when reused at a different one. */
+#define MATE_SCORE_THRESHOLD (MATE_VALUE - 1000)
+
+static int mateScoreToTT(int score, int ply)
+{
+    if (score >= MATE_SCORE_THRESHOLD)
+        return score + ply;
+    if (score <= -MATE_SCORE_THRESHOLD)
+        return score - ply;
+    return score;
+}
+
+static int mateScoreFromTT(int score, int ply)
+{
+    if (score >= MATE_SCORE_THRESHOLD)
+        return score - ply;
+    if (score <= -MATE_SCORE_THRESHOLD)
+        return score + ply;
+    return score;
+}
+
+/* Returns NULL on a miss (including when the table is disabled). A hit
+ * only means "this position has been searched before" - the caller still
+ * has to check .depth before trusting .score for a cutoff; .bestMove is
+ * safe to use as a move-ordering hint regardless of stored depth. */
+static TTEntry *ttLookup(uint64_t key)
+{
+    if (!useTranspositionTable)
+        return NULL;
+    TTEntry *entry = &transpositionTable[key & TT_INDEX_MASK];
+    if (entry->occupied && entry->key == key)
+        return entry;
+    return NULL;
+}
+
+/* Depth-preferred replacement: a shallower re-search of the same position
+ * never overwrites a deeper, more valuable entry already there. */
+static void ttStore(uint64_t key, int depth, int score, TTFlag flag, Move bestMove)
+{
+    if (!useTranspositionTable)
+        return;
+    TTEntry *entry = &transpositionTable[key & TT_INDEX_MASK];
+    if (entry->occupied && entry->key == key && entry->depth > depth)
+        return;
+
+    entry->key = key;
+    entry->depth = depth;
+    entry->score = score;
+    entry->flag = flag;
+    entry->bestMove = bestMove;
+    entry->occupied = true;
+}
+
+static bool movesEqual(Move a, Move b)
+{
+    return a.from.row == b.from.row && a.from.col == b.from.col &&
+           a.to.row == b.to.row && a.to.col == b.to.col &&
+           a.promotion == b.promotion;
+}
+
+/* ========================================================================== */
+/* MOVE ORDERING STATE (killer moves + history heuristic)                    */
+/* ========================================================================== */
+
+/* Two killer slots per ply: quiet moves that recently caused a beta cutoff
+ * at that same ply, in a sibling branch. Tried right after captures/
+ * promotions, on the reasoning that a move which refuted one line is a
+ * good first guess for refuting a similar sibling line too. Bounded (and
+ * always bounds-checked) since ply can in principle exceed any fixed size
+ * if the search depth is set very high and check extensions stack. */
+#define MAX_KILLER_PLY 128
+static Move killerMoves[MAX_KILLER_PLY][2];
+
+/* Quiet moves that have caused cutoffs anywhere in the current search,
+ * indexed by [from-square][to-square] and weighted by depth^2 (a cutoff
+ * found deep in the tree is a stronger signal than one found near a leaf).
+ * Reset per findBestMove() call - it's a hint for the *current* search,
+ * not something that should bias an unrelated later position. */
+static int historyTable[64][64];
+
+static void resetMoveOrderingState(void)
+{
+    Move invalid = {.from = {-1, -1}, .to = {-1, -1}, .promotion = EMPTY, .flag = MOVE_NORMAL};
+    for (int p = 0; p < MAX_KILLER_PLY; p++)
+    {
+        killerMoves[p][0] = invalid;
+        killerMoves[p][1] = invalid;
+    }
+    memset(historyTable, 0, sizeof(historyTable));
+}
+
+static void recordQuietCutoff(Move m, int ply, int depth)
+{
+    if (ply >= 0 && ply < MAX_KILLER_PLY && !movesEqual(m, killerMoves[ply][0]))
+    {
+        killerMoves[ply][1] = killerMoves[ply][0];
+        killerMoves[ply][0] = m;
+    }
+    historyTable[m.from.row * 8 + m.from.col][m.to.row * 8 + m.to.col] += depth * depth;
+}
+
 /* -------------------------------------------------------------------------- */
 /* INTERNAL FUNCTION PROTOTYPES                                               */
 /* -------------------------------------------------------------------------- */
@@ -114,8 +359,8 @@ static int quiescence(BoardState *board, int alpha, int beta);
 
 /* Heuristics & Ordering */
 
-static int scoreMove(BoardState *board, Move m);
-static void scoreMoves(BoardState *board, MoveList *list);
+static int scoreMove(BoardState *board, Move m, int ply, Move ttMoveHint);
+static void scoreMoves(BoardState *board, MoveList *list, int ply, Move ttMoveHint);
 
 /* Move Generation Helpers (Standard Chess Logic) */
 
@@ -140,6 +385,10 @@ Move findBestMove(BoardState *board)
     searchStartTime = clock();
     searchAborted = false;
     nodesSinceTimeCheck = 0;
+    nodesSearched = 0;
+    resetMoveOrderingState();
+
+    Move noHint = {.from = {-1, -1}, .to = {-1, -1}, .promotion = EMPTY, .flag = MOVE_NORMAL};
 
     Move bestMove;
     bestMove.from = (Position){-1, -1}; // Initialize to invalid to detect errors
@@ -154,9 +403,12 @@ Move findBestMove(BoardState *board)
     bestMove = legalMoves.moves[0];
 
     // Sort moves: Check Captures first! Finding a good move early allows
-    // Alpha-Beta to prune bad branches later. Ordering is a static heuristic
-    // (doesn't depend on search depth), so this only needs doing once.
-    scoreMoves(board, &legalMoves);
+    // Alpha-Beta to prune bad branches later. If a previous, unrelated
+    // search already analyzed this exact position, its transposition-table
+    // entry gives a first guess at the best move too.
+    uint64_t rootHash = zobristHash(board);
+    TTEntry *rootEntry = ttLookup(rootHash);
+    scoreMoves(board, &legalMoves, 0, rootEntry != NULL ? rootEntry->bestMove : noHint);
 
     for (int depth = 1; depth <= searchDepth; depth++)
     {
@@ -204,6 +456,11 @@ Move findBestMove(BoardState *board)
         if (depthCompleted)
         {
             bestMove = bestMoveThisDepth;
+
+            // Re-order for the next, deeper iteration: trying this depth's
+            // best move first again is the strongest ordering hint
+            // available, keeping alpha-beta pruning effective as depth grows.
+            scoreMoves(board, &legalMoves, 0, bestMove);
         }
 
         if (searchAborted || searchTimeExpired())
@@ -294,6 +551,7 @@ Move findBestMoveTimed(BoardState *board, double remainingSeconds, double increm
  */
 static int quiescence(BoardState *board, int alpha, int beta)
 {
+    nodesSearched++;
     if (searchShouldStop())
         return 0;
 
@@ -315,8 +573,12 @@ static int quiescence(BoardState *board, int alpha, int beta)
         alpha = stand_pat;
 
     // 4. GENERATE MOVES (Captures Only)
+    // Quiescence doesn't use the transposition table or killer/history
+    // ordering (see docs/SEARCH_AND_EVAL.md) - plain MVV-LVA only, same as
+    // before, hence the out-of-range ply and empty move hint below.
     MoveList moves = generateAllLegalMoves(board);
-    scoreMoves(board, &moves);
+    Move noHint = {.from = {-1, -1}, .to = {-1, -1}, .promotion = EMPTY, .flag = MOVE_NORMAL};
+    scoreMoves(board, &moves, -1, noHint);
 
     for (int i = 0; i < moves.count; i++)
     {
@@ -353,6 +615,7 @@ static int quiescence(BoardState *board, int alpha, int beta)
  */
 static int negamax(BoardState *board, int depth, int alpha, int beta, int ply)
 {
+    nodesSearched++;
     if (searchShouldStop())
         return 0;
 
@@ -363,10 +626,34 @@ static int negamax(BoardState *board, int depth, int alpha, int beta, int ply)
     // CHECK EXTENSION
     // If we are in check, we extend the search depth by 1.
     // This ensures we don't stop searching just before a checkmate.
+    // Computed before the transposition-table probe below so a stored
+    // entry's depth always means the same thing (post-extension) whether
+    // it's being read or written.
     bool inCheck = isKingInCheck(board, board->currentPlayer);
     if (inCheck)
     {
         depth++;
+    }
+
+    int origAlpha = alpha;
+    uint64_t hash = zobristHash(board);
+    Move noHint = {.from = {-1, -1}, .to = {-1, -1}, .promotion = EMPTY, .flag = MOVE_NORMAL};
+    Move ttMoveHint = noHint;
+
+    TTEntry *tte = ttLookup(hash);
+    if (tte != NULL)
+    {
+        ttMoveHint = tte->bestMove;
+        if (tte->depth >= depth)
+        {
+            int score = mateScoreFromTT(tte->score, ply);
+            if (tte->flag == TT_FLAG_EXACT)
+                return score;
+            if (tte->flag == TT_FLAG_LOWERBOUND && score >= beta)
+                return score;
+            if (tte->flag == TT_FLAG_UPPERBOUND && score <= alpha)
+                return score;
+        }
     }
 
     // BASE CASE 2: Depth Limit Reached -> Enter Quiescence Search
@@ -388,24 +675,33 @@ static int negamax(BoardState *board, int depth, int alpha, int beta, int ply)
             return 0;
     }
 
-    // Sort Moves (Captures first for pruning)
-    scoreMoves(board, &legalMoves);
+    // Sort Moves (Captures first for pruning; the transposition table's
+    // suggested move, if any, is tried before even those).
+    scoreMoves(board, &legalMoves, ply, ttMoveHint);
 
     // RECURSION
     int maxVal = -INFINITY_SCORE;
+    Move bestMoveHere = legalMoves.moves[0];
 
     for (int i = 0; i < legalMoves.count; i++)
     {
-        makeMove(board, legalMoves.moves[i]);
+        Move currentMove = legalMoves.moves[i];
+        bool isQuiet = (board->squares[currentMove.to.row][currentMove.to.col].type == EMPTY &&
+                        currentMove.flag != MOVE_EN_PASSANT);
+
+        makeMove(board, currentMove);
 
         // NegaMax Step: Flip alpha/beta, negate result.
         int score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
 
-        undoMove(board, legalMoves.moves[i]);
+        undoMove(board, currentMove);
 
         // Track best score
         if (score > maxVal)
+        {
             maxVal = score;
+            bestMoveHere = currentMove;
+        }
 
         // Update Alpha
         if (score > alpha)
@@ -413,8 +709,19 @@ static int negamax(BoardState *board, int depth, int alpha, int beta, int ply)
 
         // Beta Pruning: Opponent has a better option elsewhere.
         if (alpha >= beta)
+        {
+            // A quiet move that refuted this line is a good first guess for
+            // refuting a similar sibling line too (killer moves), and a
+            // useful general signal for move ordering elsewhere (history).
+            if (isQuiet)
+                recordQuietCutoff(currentMove, ply, depth);
             break;
+        }
     }
+
+    TTFlag flag = (maxVal <= origAlpha) ? TT_FLAG_UPPERBOUND : (maxVal >= beta) ? TT_FLAG_LOWERBOUND
+                                                                                : TT_FLAG_EXACT;
+    ttStore(hash, depth, mateScoreToTT(maxVal, ply), flag, bestMoveHere);
 
     return maxVal;
 }
@@ -424,12 +731,24 @@ static int negamax(BoardState *board, int depth, int alpha, int beta, int ply)
 /* ========================================================================== */
 
 /**
- * @brief Assigns a score to a move for sorting purposes.
- * Uses MVV-LVA: Most Valuable Victim - Least Valuable Aggressor.
- * * @return Higher score = Better candidate to search first.
+ * @brief Assigns a score to a move for sorting purposes, so alpha-beta sees
+ * the most promising moves first and prunes more of the tree. Ordered,
+ * highest priority first: the transposition table's suggested move (our
+ * best guess at the best move here, from a previous search of this exact
+ * position), then MVV-LVA captures, then promotions, then killer moves
+ * (quiet moves that recently refuted a sibling line at this same ply),
+ * then other quiet moves by history-heuristic score.
+ * * @param ply Search ply, for killer-move lookup; pass a negative value
+ * (e.g. from quiescence(), which doesn't use killers) to skip it safely.
+ * @param ttMoveHint The transposition table's suggested move, or a move
+ * with from.row == -1 if none.
+ * @return Higher score = better candidate to search first.
  */
-static int scoreMove(BoardState *board, Move m)
+static int scoreMove(BoardState *board, Move m, int ply, Move ttMoveHint)
 {
+    if (ttMoveHint.from.row != -1 && movesEqual(m, ttMoveHint))
+        return 1000000;
+
     Piece target = board->squares[m.to.row][m.to.col];
 
     // A. CAPTURES
@@ -496,19 +815,32 @@ static int scoreMove(BoardState *board, Move m)
     if (m.flag == MOVE_PROMOTION)
         return 9000;
 
-    // C. QUIET MOVES (Future: History Heuristic)
-    return 0;
+    // C. KILLER MOVES
+    if (ply >= 0 && ply < MAX_KILLER_PLY)
+    {
+        if (movesEqual(m, killerMoves[ply][0]))
+            return 8500;
+        if (movesEqual(m, killerMoves[ply][1]))
+            return 8000;
+    }
+
+    // D. OTHER QUIET MOVES (History Heuristic)
+    // Clamped below the killer-move band so a very frequently-cutting quiet
+    // move can never be reordered ahead of an actual killer at this ply.
+    int historyScore = historyTable[m.from.row * 8 + m.from.col][m.to.row * 8 + m.to.col];
+    return (historyScore > 7000) ? 7000 : historyScore;
 }
 
 /**
- * @brief Sorts moves in descending order using Bubble Sort.
+ * @brief Sorts moves in descending order (best candidate first) using
+ * Bubble Sort - see scoreMove() for the ranking.
  */
-static void scoreMoves(BoardState *board, MoveList *list)
+static void scoreMoves(BoardState *board, MoveList *list, int ply, Move ttMoveHint)
 {
     int scores[MAX_MOVES_IN_LIST];
     // Pre-calculate scores
     for (int i = 0; i < list->count; i++)
-        scores[i] = scoreMove(board, list->moves[i]);
+        scores[i] = scoreMove(board, list->moves[i], ply, ttMoveHint);
 
     // Sort
     for (int i = 0; i < list->count - 1; i++)

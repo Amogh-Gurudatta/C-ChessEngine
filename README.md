@@ -16,11 +16,12 @@ This README covers building, installing, and playing. For how the engine works i
 
   * **NegaMax + Alpha-Beta Pruning** for efficient game‑tree search
   * **Iterative Deepening** with an optional time cap, so the engine can stop and return its best move so far instead of searching indefinitely
+  * **Transposition Table** (Zobrist hashing) to skip re-searching positions already seen via a different move order
   * **Quiescence Search** to reduce the horizon effect
-  * **MVV-LVA move ordering** to improve pruning efficiency
+  * **Move ordering**: the transposition table's suggested move, then MVV-LVA captures, promotions, killer moves, and the history heuristic
 * **Adjustable Difficulty:** Search depth and/or a per-move time budget can be set from the command line or mid-game.
 * **Real Chess Clocks:** Fischer-style clocks (time + increment) for both sides, with the engine managing its own thinking time based on time left, increment, and game phase — like a real chess engine, not a flat per-move cap.
-* **Tapered Evaluation:** Blends **Middlegame (MG)** and **Endgame (EG)** heuristics dynamically based on remaining material.
+* **Tapered Evaluation:** Material, piece-square tables, mobility, bishop pair, rook file bonuses, pawn structure (doubled/isolated/passed), and king safety, blended between **Middlegame (MG)** and **Endgame (EG)** weights based on remaining material.
 * **Game Persistence:** Save and load game states through a simple `board.txt` file.
 * **Full Draw Detection:** Checkmate, stalemate, the 50-move rule, insufficient material, and threefold repetition are all detected and end the game automatically.
 * **Standard Notation:** Accepts and prints Standard Algebraic Notation (`e4`, `Nf3`, `O-O`), and can import/export real FEN and PGN.

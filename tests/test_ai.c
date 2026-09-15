@@ -163,6 +163,91 @@ static void test_find_best_move_timed_respects_the_clock(void)
     CHECK(isLegal, "findBestMoveTimed still returns a fully legal move under time pressure");
 }
 
+static bool movesAreEqual(Move a, Move b)
+{
+    return a.from.row == b.from.row && a.from.col == b.from.col &&
+           a.to.row == b.to.row && a.to.col == b.to.col && a.promotion == b.promotion;
+}
+
+static void test_transposition_table_does_not_change_the_result(void)
+{
+    SECTION("the transposition table changes search speed, not the result");
+
+    BoardState board;
+    fenToBoard("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3", &board);
+
+    int originalDepth = getSearchDepth();
+    double originalTimeLimit = getSearchTimeLimit();
+    bool originalTTState = getUseTranspositionTable();
+
+    setSearchDepth(4);
+    setSearchTimeLimit(0); // no time cap: both runs must complete the full depth
+
+    setUseTranspositionTable(false);
+    Move moveWithoutTT = findBestMove(&board);
+
+    setUseTranspositionTable(true);
+    Move moveWithTT = findBestMove(&board);
+
+    setSearchDepth(originalDepth);
+    setSearchTimeLimit(originalTimeLimit);
+    setUseTranspositionTable(originalTTState);
+
+    CHECK(movesAreEqual(moveWithoutTT, moveWithTT),
+          "enabling the transposition table does not change the move a full-depth search finds");
+}
+
+static void test_transposition_table_reduces_node_count(void)
+{
+    SECTION("the transposition table measurably reduces nodes searched");
+
+    BoardState board;
+    fenToBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+
+    int originalDepth = getSearchDepth();
+    double originalTimeLimit = getSearchTimeLimit();
+    bool originalTTState = getUseTranspositionTable();
+
+    setSearchDepth(4);
+    setSearchTimeLimit(0);
+
+    setUseTranspositionTable(false);
+    findBestMove(&board);
+    long nodesWithoutTT = getLastSearchNodeCount();
+
+    setUseTranspositionTable(true);
+    findBestMove(&board);
+    long nodesWithTT = getLastSearchNodeCount();
+
+    setSearchDepth(originalDepth);
+    setSearchTimeLimit(originalTimeLimit);
+    setUseTranspositionTable(originalTTState);
+
+    CHECK(nodesWithTT < nodesWithoutTT,
+          "the transposition table reduces the number of nodes searched at the same depth");
+}
+
+static void test_finds_mate_in_one_at_greater_depth(void)
+{
+    SECTION("findBestMove still finds the same forced mate at a much greater depth");
+
+    /* Same, already-verified mate-in-one as test_finds_mate_in_one() above,
+     * but searched much deeper - exercising far more transposition-table
+     * hits, killer-move updates, and history-heuristic accumulation than
+     * the default-depth test does, while the correct answer is known. */
+    BoardState board;
+    fenToBoard("7k/5ppp/8/8/8/8/8/3RK3 w - - 0 1", &board);
+
+    int originalDepth = getSearchDepth();
+    setSearchDepth(10);
+
+    Move best = findBestMove(&board);
+    CHECK(best.from.row == 7 && best.from.col == 3, "findBestMove still picks up the rook on d1");
+    CHECK(best.to.row == 0 && best.to.col == 3, "findBestMove still delivers Rd8# at depth 10");
+
+    setSearchDepth(originalDepth);
+}
+
 void run_ai_tests(void)
 {
     test_finds_mate_in_one();
@@ -171,4 +256,7 @@ void run_ai_tests(void)
     test_time_cap_interrupts_a_deep_search();
     test_compute_move_time_budget();
     test_find_best_move_timed_respects_the_clock();
+    test_transposition_table_does_not_change_the_result();
+    test_transposition_table_reduces_node_count();
+    test_finds_mate_in_one_at_greater_depth();
 }

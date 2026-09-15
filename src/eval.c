@@ -1,5 +1,6 @@
 #include "eval.h"
 #include "structs.h"
+#include <stdbool.h>
 
 /* * ============================================================================
  * TAPERED EVALUATION IMPLEMENTATION
@@ -270,6 +271,188 @@ int getGamePhase(BoardState *board)
     return gamePhase;
 }
 
+// --- Structural Bonuses ---
+// Beyond material/PST/mobility: pawn structure, bishop pair, rook files,
+// and a simple king-safety term. See docs/SEARCH_AND_EVAL.md for the
+// reasoning behind each. All of these are symmetric by construction (the
+// same function is called for both colors and the results subtracted), so
+// they contribute exactly 0 to the standard starting position, same as
+// every other term here.
+
+#define BISHOP_PAIR_MG 30
+#define BISHOP_PAIR_EG 40
+
+#define ROOK_OPEN_FILE_MG 20
+#define ROOK_OPEN_FILE_EG 15
+#define ROOK_SEMIOPEN_FILE_MG 10
+#define ROOK_SEMIOPEN_FILE_EG 8
+
+#define DOUBLED_PAWN_PENALTY_MG 10
+#define DOUBLED_PAWN_PENALTY_EG 20
+
+#define ISOLATED_PAWN_PENALTY_MG 12
+#define ISOLATED_PAWN_PENALTY_EG 18
+
+/* Only added to the middlegame score, not the endgame one - king safety
+ * matters far less once the board has simplified, and the tapered blend
+ * already suppresses mg-only terms automatically as the phase drops. */
+#define KING_SHIELD_BONUS_MG 10
+
+/* Indexed by "ranks advanced from this pawn's own starting rank" (0..6);
+ * bigger in the endgame, where a passed pawn's promotion threat is much
+ * more dangerous with fewer pieces around to stop it. */
+static const int passedPawnBonusMg[8] = {0, 5, 10, 20, 35, 60, 100, 0};
+static const int passedPawnBonusEg[8] = {0, 10, 20, 40, 70, 120, 200, 0};
+
+static void countPawnFiles(BoardState *board, PieceColor color, int fileCounts[8])
+{
+    for (int i = 0; i < 8; i++)
+        fileCounts[i] = 0;
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++)
+        {
+            Piece p = board->squares[r][c];
+            if (p.type == PAWN && p.color == color)
+                fileCounts[c]++;
+        }
+}
+
+/* A pawn is passed if no enemy pawn on its own file or either adjacent
+ * file is still ahead of it (between it and the promotion square). */
+static bool pawnIsPassed(BoardState *board, PieceColor color, int r, int c)
+{
+    PieceColor enemy = (color == WHITE) ? BLACK : WHITE;
+    int dir = (color == WHITE) ? -1 : 1; // toward promotion
+    for (int cc = c - 1; cc <= c + 1; cc++)
+    {
+        if (cc < 0 || cc > 7)
+            continue;
+        for (int rr = r + dir; rr >= 0 && rr <= 7; rr += dir)
+        {
+            Piece p = board->squares[rr][cc];
+            if (p.type == PAWN && p.color == enemy)
+                return false;
+        }
+    }
+    return true;
+}
+
+/* Doubled and isolated pawns are structural weaknesses (penalty); passed
+ * pawns are a structural strength (bonus), scaled by how far advanced. */
+static void pawnStructureScore(BoardState *board, PieceColor color, const int fileCounts[8], int *mg, int *eg)
+{
+    for (int f = 0; f < 8; f++)
+    {
+        if (fileCounts[f] > 1)
+        {
+            int extraPawns = fileCounts[f] - 1;
+            *mg -= extraPawns * DOUBLED_PAWN_PENALTY_MG;
+            *eg -= extraPawns * DOUBLED_PAWN_PENALTY_EG;
+        }
+    }
+
+    for (int r = 0; r < 8; r++)
+    {
+        for (int c = 0; c < 8; c++)
+        {
+            Piece p = board->squares[r][c];
+            if (p.type != PAWN || p.color != color)
+                continue;
+
+            bool leftHasPawn = (c > 0) && fileCounts[c - 1] > 0;
+            bool rightHasPawn = (c < 7) && fileCounts[c + 1] > 0;
+            if (!leftHasPawn && !rightHasPawn)
+            {
+                *mg -= ISOLATED_PAWN_PENALTY_MG;
+                *eg -= ISOLATED_PAWN_PENALTY_EG;
+            }
+
+            if (pawnIsPassed(board, color, r, c))
+            {
+                int advancement = (color == WHITE) ? (6 - r) : (r - 1);
+                if (advancement < 0)
+                    advancement = 0;
+                if (advancement > 7)
+                    advancement = 7;
+                *mg += passedPawnBonusMg[advancement];
+                *eg += passedPawnBonusEg[advancement];
+            }
+        }
+    }
+}
+
+static int countBishops(BoardState *board, PieceColor color)
+{
+    int count = 0;
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++)
+            if (board->squares[r][c].type == BISHOP && board->squares[r][c].color == color)
+                count++;
+    return count;
+}
+
+static void rookFileScore(BoardState *board, PieceColor color, const int ownPawnFiles[8],
+                           const int enemyPawnFiles[8], int *mg, int *eg)
+{
+    for (int r = 0; r < 8; r++)
+    {
+        for (int c = 0; c < 8; c++)
+        {
+            Piece p = board->squares[r][c];
+            if (p.type != ROOK || p.color != color)
+                continue;
+
+            bool ownPawnOnFile = ownPawnFiles[c] > 0;
+            bool enemyPawnOnFile = enemyPawnFiles[c] > 0;
+            if (!ownPawnOnFile && !enemyPawnOnFile)
+            {
+                *mg += ROOK_OPEN_FILE_MG;
+                *eg += ROOK_OPEN_FILE_EG;
+            }
+            else if (!ownPawnOnFile)
+            {
+                *mg += ROOK_SEMIOPEN_FILE_MG;
+                *eg += ROOK_SEMIOPEN_FILE_EG;
+            }
+        }
+    }
+}
+
+static Position findKingSquare(BoardState *board, PieceColor color)
+{
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++)
+            if (board->squares[r][c].type == KING && board->squares[r][c].color == color)
+                return (Position){r, c};
+    return (Position){-1, -1};
+}
+
+/* Counts friendly pawns on the rank directly in front of the king, across
+ * its own file and the two adjacent ones - a simple, standard proxy for
+ * king safety (an intact pawn shield vs. an exposed king). */
+static int kingShieldScore(BoardState *board, PieceColor color)
+{
+    Position king = findKingSquare(board, color);
+    if (king.row == -1)
+        return 0;
+
+    int dir = (color == WHITE) ? -1 : 1;
+    int shieldRank = king.row + dir;
+    if (shieldRank < 0 || shieldRank > 7)
+        return 0;
+
+    int shieldCount = 0;
+    for (int c = king.col - 1; c <= king.col + 1; c++)
+    {
+        if (c < 0 || c > 7)
+            continue;
+        Piece p = board->squares[shieldRank][c];
+        if (p.type == PAWN && p.color == color)
+            shieldCount++;
+    }
+    return shieldCount * KING_SHIELD_BONUS_MG;
+}
+
 // --- Main Evaluation ---
 
 int evaluateBoard(BoardState *board)
@@ -343,6 +526,36 @@ int evaluateBoard(BoardState *board)
             }
         }
     }
+
+    // 1b. Structural bonuses: pawn structure, bishop pair, rook files, king safety.
+    int whiteMg = 0, whiteEg = 0, blackMg = 0, blackEg = 0;
+
+    int whitePawnFiles[8], blackPawnFiles[8];
+    countPawnFiles(board, WHITE, whitePawnFiles);
+    countPawnFiles(board, BLACK, blackPawnFiles);
+
+    pawnStructureScore(board, WHITE, whitePawnFiles, &whiteMg, &whiteEg);
+    pawnStructureScore(board, BLACK, blackPawnFiles, &blackMg, &blackEg);
+
+    rookFileScore(board, WHITE, whitePawnFiles, blackPawnFiles, &whiteMg, &whiteEg);
+    rookFileScore(board, BLACK, blackPawnFiles, whitePawnFiles, &blackMg, &blackEg);
+
+    if (countBishops(board, WHITE) >= 2)
+    {
+        whiteMg += BISHOP_PAIR_MG;
+        whiteEg += BISHOP_PAIR_EG;
+    }
+    if (countBishops(board, BLACK) >= 2)
+    {
+        blackMg += BISHOP_PAIR_MG;
+        blackEg += BISHOP_PAIR_EG;
+    }
+
+    whiteMg += kingShieldScore(board, WHITE);
+    blackMg += kingShieldScore(board, BLACK);
+
+    mgScore += whiteMg - blackMg;
+    egScore += whiteEg - blackEg;
 
     // 2. Tapered Evaluation Formula
     int mgWeight = getGamePhase(board);
