@@ -23,7 +23,23 @@ static void test_finds_mate_in_one(void)
     CHECK(isKingInCheck(&board, BLACK) && replies.count == 0, "the move played is indeed checkmate");
 }
 
+static void test_search_depth_is_adjustable(void)
+{
+    SECTION("setSearchDepth / getSearchDepth");
+
+    int original = getSearchDepth();
+
+    setSearchDepth(3);
+    CHECK(getSearchDepth() == 3, "setSearchDepth updates the depth used by findBestMove");
+
+    setSearchDepth(0);
+    CHECK(getSearchDepth() == 3, "setSearchDepth ignores non-positive values");
+
+    setSearchDepth(original);
+}
+
 void run_ai_tests(void)
 {
     test_finds_mate_in_one();
+    test_search_depth_is_adjustable();
 }

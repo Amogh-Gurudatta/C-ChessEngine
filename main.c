@@ -93,16 +93,41 @@ int countPositionOccurrences(char history[][FEN_MAX_LEN], int historyCount, cons
     return count;
 }
 
+/**
+ * @brief Finds the value following a flag anywhere in argv (e.g. "--depth 4"),
+ * so it can be combined freely with the other single-flag options below.
+ */
+static const char *findArgValue(int argc, char *argv[], const char *flag)
+{
+    for (int i = 1; i < argc - 1; i++)
+    {
+        if (!strcmp(argv[i], flag))
+            return argv[i + 1];
+    }
+    return NULL;
+}
+
 /* ========================================================================== */
 /* MAIN LOOP                                                                  */
 /* ========================================================================== */
 
 int main(int argc, char *argv[])
 {
-#ifdef LICHESS_ENABLED
-    if (argc >= 3 && !strcmp(argv[1], "--lichess"))
+    const char *depthArg = findArgValue(argc, argv, "--depth");
+    if (depthArg != NULL)
     {
-        playLichessGame(argv[2]);
+        int depth = atoi(depthArg);
+        if (depth >= 1)
+            setSearchDepth(depth);
+        else
+            printf("Ignoring invalid --depth value; must be a positive integer.\n");
+    }
+
+#ifdef LICHESS_ENABLED
+    const char *lichessGameId = findArgValue(argc, argv, "--lichess");
+    if (lichessGameId != NULL)
+    {
+        playLichessGame(lichessGameId);
         return 0;
     }
 #endif
@@ -118,10 +143,16 @@ int main(int argc, char *argv[])
     char positionHistory[MAX_POSITION_HISTORY][FEN_MAX_LEN];
     int positionHistoryCount = 0;
 
+    // Full FEN snapshot after every move, so "undo" can roll the board back
+    // without depending on game.c's internal (and loadfen-oblivious) undo stack.
+    char fenHistory[MAX_POSITION_HISTORY][FEN_MAX_LEN];
+    int fenHistoryCount = 0;
+
     // 1. Game Initialization
     // Try to load a saved game, otherwise a position given via --fen, otherwise
     // fall back to the standard chess starting position.
-    if (argc >= 3 && !strcmp(argv[1], "--fen") && fenToBoard(argv[2], &board))
+    const char *fenArg = findArgValue(argc, argv, "--fen");
+    if (fenArg != NULL && fenToBoard(fenArg, &board))
     {
         printf("Starting from given FEN.\n");
     }
@@ -145,6 +176,7 @@ int main(int argc, char *argv[])
     }
 
     boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
+    boardToFen(&board, fenHistory[fenHistoryCount++], FEN_MAX_LEN);
 
     // 2. The Game Loop
     while (1)
@@ -263,10 +295,15 @@ int main(int argc, char *argv[])
 
                     if (fenToBoard(fenLine, &board))
                     {
-                        // A manually loaded position starts a fresh repetition
-                        // history; positions from before don't belong to it.
+                        // A manually loaded position starts a fresh repetition,
+                        // undo, and move-log history; moves from before don't
+                        // belong to it, and sanCount must stay in lockstep with
+                        // fenHistoryCount/positionHistoryCount for "undo" to work.
+                        sanCount = 0;
                         positionHistoryCount = 0;
                         boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
+                        fenHistoryCount = 0;
+                        boardToFen(&board, fenHistory[fenHistoryCount++], FEN_MAX_LEN);
                         printf("Position loaded.\n");
                     }
                     else
@@ -285,6 +322,53 @@ int main(int argc, char *argv[])
                 printMoveLog(sanLog, sanCount);
                 continue;
             }
+            if (!strcmp(input, "undo"))
+            {
+                // fenHistory[0] is the starting/checkpoint position, so that
+                // many moves are already "used up" and can't be undone.
+                int available = fenHistoryCount - 1;
+                int toUndo = (available >= 2) ? 2 : available;
+
+                if (toUndo == 0)
+                {
+                    printf("Nothing to undo.\n");
+                }
+                else
+                {
+                    fenHistoryCount -= toUndo;
+                    sanCount -= toUndo;
+                    positionHistoryCount -= toUndo;
+                    fenToBoard(fenHistory[fenHistoryCount - 1], &board);
+                    printf("Undid %d move(s). It's your move again.\n", toUndo);
+                }
+                continue;
+            }
+            if (!strcmp(input, "depth"))
+            {
+                // Consume the rest of the current line before reading a fresh one.
+                int ch;
+                while ((ch = getchar()) != '\n' && ch != EOF)
+                {
+                }
+
+                char line[32];
+                printf("Current search depth: %d. Enter a new depth (or press Enter to keep it): ",
+                       getSearchDepth());
+                if (fgets(line, sizeof(line), stdin) && line[0] != '\n')
+                {
+                    int depth = atoi(line);
+                    if (depth >= 1)
+                    {
+                        setSearchDepth(depth);
+                        printf("Search depth set to %d.\n", depth);
+                    }
+                    else
+                    {
+                        printf("Please enter a positive integer.\n");
+                    }
+                }
+                continue;
+            }
 
             // Parse the move (long algebraic or SAN) and resolve it against legality.
             Move finalMove;
@@ -297,6 +381,8 @@ int main(int argc, char *argv[])
                     sanCount++;
                 if (positionHistoryCount < MAX_POSITION_HISTORY)
                     boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
+                if (fenHistoryCount < MAX_POSITION_HISTORY)
+                    boardToFen(&board, fenHistory[fenHistoryCount++], FEN_MAX_LEN);
             }
             else
             {
@@ -329,6 +415,8 @@ int main(int argc, char *argv[])
                 strcpy(sanLog[sanCount++], sanBuf);
             if (positionHistoryCount < MAX_POSITION_HISTORY)
                 boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
+            if (fenHistoryCount < MAX_POSITION_HISTORY)
+                boardToFen(&board, fenHistory[fenHistoryCount++], FEN_MAX_LEN);
         }
     }
 

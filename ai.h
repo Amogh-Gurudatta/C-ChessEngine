@@ -22,4 +22,9 @@ MoveList generateAllLegalMoves(BoardState *board);
  * declare it as a real draw, not just use it as a search heuristic. */
 bool isInsufficientMaterial(BoardState *board);
 
+/* Adjustable AI difficulty: the number of half-move plies findBestMove
+ * searches. Higher is stronger but slower. Values below 1 are ignored. */
+void setSearchDepth(int depth);
+int getSearchDepth(void);
+
 #endif // AI_H

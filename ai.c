@@ -35,12 +35,26 @@
 #include "game.h"
 #include "structs.h"
 
-/* * SEARCH_DEPTH: The fixed number of half-moves (plies) the engine searches.
- * Depth 6 allows the engine to see 3 full moves ahead for both sides.
+/* * DEFAULT_SEARCH_DEPTH: The default number of half-moves (plies) the engine
+ * searches. Depth 6 allows the engine to see 3 full moves ahead for both
+ * sides. Adjustable at runtime via setSearchDepth() (see ai.h).
  */
-#define SEARCH_DEPTH 6
+#define DEFAULT_SEARCH_DEPTH 6
 #define INFINITY_SCORE 1000000
 #define MATE_VALUE (INFINITY_SCORE - 1000)
+
+static int searchDepth = DEFAULT_SEARCH_DEPTH;
+
+void setSearchDepth(int depth)
+{
+    if (depth >= 1)
+        searchDepth = depth;
+}
+
+int getSearchDepth(void)
+{
+    return searchDepth;
+}
 
 /* -------------------------------------------------------------------------- */
 /* INTERNAL FUNCTION PROTOTYPES                                               */
@@ -104,7 +118,7 @@ Move findBestMove(BoardState *board)
          * We flip the result because the opponent's score is bad for us.
          * We swap -beta and -alpha to reflect the perspective shift.
          */
-        int val = -negamax(board, SEARCH_DEPTH - 1, -beta, -alpha, 1);
+        int val = -negamax(board, searchDepth - 1, -beta, -alpha, 1);
 
         undoMove(board, currentMove);
 

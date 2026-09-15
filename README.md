@@ -1,5 +1,7 @@
 # **C-ChessEngine**
 
+[![CI](https://github.com/Amogh-Gurudatta/C-ChessEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/Amogh-Gurudatta/C-ChessEngine/actions/workflows/ci.yml)
+
 A high-performance, console-based chess engine written entirely in C. This project showcases efficient board representation, legal move generation, and advanced search algorithms including **NegaMax with Alpha-Beta Pruning**, **Quiescence Search**, and **Tapered Evaluation**.
 
 ---
@@ -89,14 +91,16 @@ You play as **White**, and the engine plays as **Black**.
 | **loadfen**   | Load a position from a FEN string you paste in                | `loadfen`      |
 | **moves**     | Print the game's move list in SAN                              | `moves`        |
 | **pgn**       | Export the game so far to `game.pgn`                           | `pgn`          |
+| **undo**      | Take back your last move (and the engine's reply)              | `undo`         |
+| **depth**     | View or change the engine's search depth (higher = stronger, slower) | `depth`  |
 | **quit**      | Exit the engine                                                | `quit`         |
 
-A finished game is automatically exported to `game.pgn`.
+A finished game is automatically exported to `game.pgn`. The game ends automatically on checkmate, stalemate, the 50-move rule, insufficient material, or threefold repetition.
 
-You can also start the engine directly from a FEN string:
+You can also start the engine directly from a FEN string and/or with a custom search depth (the default is 6 plies):
 
 ```bash
-./build/chess_engine --fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+./build/chess_engine --fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" --depth 4
 ```
 
 ---

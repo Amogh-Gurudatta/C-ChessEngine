@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libcurl (for the optional Lichess build)
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+
+      - name: Run unit tests
+        run: make test
+
+      - name: Build (default, no external dependencies)
+        run: make clean && make
+
+      - name: Build with Lichess Board API support
+        run: make clean && make LICHESS=1
