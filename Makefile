@@ -13,6 +13,12 @@ BUILD_DIR := build
 # Source files (wildcard selects all .c files in current dir)
 SRCS := $(wildcard $(SRC_DIR)/*.c)
 
+# lichess.c needs libcurl, which isn't installed by default for this
+# course project. It's only built in when you opt in with "make LICHESS=1".
+ifndef LICHESS
+SRCS := $(filter-out $(SRC_DIR)/lichess.c,$(SRCS))
+endif
+
 # Object files (maps .c files to build/%.o)
 OBJS := $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
@@ -35,7 +41,15 @@ DEP_FLAGS := -MMD -MP
 CFLAGS := $(WARNINGS) $(STD_FLAG) $(DEP_FLAGS)
 
 # Linker flags (if you need -lm for math, add it here)
-LDFLAGS := 
+LDFLAGS :=
+
+# --- Optional Lichess Board API support ---
+# Usage: "make LICHESS=1". Off by default so the project has zero external
+# dependencies unless you explicitly opt in (needs libcurl installed).
+ifdef LICHESS
+    CFLAGS  += -DLICHESS_ENABLED $(shell pkg-config --cflags libcurl)
+    LDFLAGS += $(shell pkg-config --libs libcurl)
+endif
 
 # --- 3. Debug vs Release Build Settings ---
 
