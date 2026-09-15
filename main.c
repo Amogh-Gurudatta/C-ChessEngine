@@ -73,6 +73,27 @@ void printMoveLog(char sanLog[][SAN_MAX_LEN], int sanCount)
 }
 
 /* ========================================================================== */
+/* THREEFOLD REPETITION HELPERS                                               */
+/* ========================================================================== */
+
+#define MAX_POSITION_HISTORY 1024
+
+/**
+ * @brief Counts how many times a position (by its repetition key) has
+ * already occurred in the game's position history.
+ */
+int countPositionOccurrences(char history[][FEN_MAX_LEN], int historyCount, const char *key)
+{
+    int count = 0;
+    for (int i = 0; i < historyCount; i++)
+    {
+        if (!strcmp(history[i], key))
+            count++;
+    }
+    return count;
+}
+
+/* ========================================================================== */
 /* MAIN LOOP                                                                  */
 /* ========================================================================== */
 
@@ -92,6 +113,10 @@ int main(int argc, char *argv[])
     char sanLog[1024][SAN_MAX_LEN];
     int sanCount = 0;
     const char *result = "*";
+
+    // Position history for threefold-repetition detection.
+    char positionHistory[MAX_POSITION_HISTORY][FEN_MAX_LEN];
+    int positionHistoryCount = 0;
 
     // 1. Game Initialization
     // Try to load a saved game, otherwise a position given via --fen, otherwise
@@ -118,6 +143,8 @@ int main(int argc, char *argv[])
         board.halfmoveClock = 0;
         board.fullmoveNumber = 1;
     }
+
+    boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
 
     // 2. The Game Loop
     while (1)
@@ -154,6 +181,39 @@ int main(int argc, char *argv[])
             remove("board.txt");
 
             break; // Terminate loop
+        }
+        else if (board.halfmoveClock >= 100)
+        {
+            // 50 full moves (100 half-moves) without a capture or pawn move.
+            printf("\n============================\n");
+            printf("DRAW! 50-move rule.\n");
+            printf("============================\n");
+            result = "1/2-1/2";
+            remove("board.txt");
+            break;
+        }
+        else if (isInsufficientMaterial(&board))
+        {
+            printf("\n============================\n");
+            printf("DRAW! Insufficient material.\n");
+            printf("============================\n");
+            result = "1/2-1/2";
+            remove("board.txt");
+            break;
+        }
+        else
+        {
+            char currentKey[FEN_MAX_LEN];
+            boardToPositionKey(&board, currentKey, sizeof(currentKey));
+            if (countPositionOccurrences(positionHistory, positionHistoryCount, currentKey) >= 3)
+            {
+                printf("\n============================\n");
+                printf("DRAW! Threefold repetition.\n");
+                printf("============================\n");
+                result = "1/2-1/2";
+                remove("board.txt");
+                break;
+            }
         }
 
         // ---------------------------------------------------------
@@ -202,7 +262,13 @@ int main(int argc, char *argv[])
                         fenLine[flen - 1] = '\0';
 
                     if (fenToBoard(fenLine, &board))
+                    {
+                        // A manually loaded position starts a fresh repetition
+                        // history; positions from before don't belong to it.
+                        positionHistoryCount = 0;
+                        boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
                         printf("Position loaded.\n");
+                    }
                     else
                         printf("Invalid FEN string.\n");
                 }
@@ -229,6 +295,8 @@ int main(int argc, char *argv[])
                 makeMove(&board, finalMove);
                 if (sanCount < 1024)
                     sanCount++;
+                if (positionHistoryCount < MAX_POSITION_HISTORY)
+                    boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
             }
             else
             {
@@ -259,6 +327,8 @@ int main(int argc, char *argv[])
 
             if (sanCount < 1024)
                 strcpy(sanLog[sanCount++], sanBuf);
+            if (positionHistoryCount < MAX_POSITION_HISTORY)
+                boardToPositionKey(&board, positionHistory[positionHistoryCount++], FEN_MAX_LEN);
         }
     }
 

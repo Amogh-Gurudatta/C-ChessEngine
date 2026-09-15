@@ -471,7 +471,11 @@ bool parseUserMove(BoardState *board, const char *input, Move *out)
 
 /* ---------------- FEN ---------------- */
 
-bool boardToFen(const BoardState *board, char *buf, size_t bufSize)
+/* Builds the first four FEN fields (piece placement, side to move,
+ * castling rights, en-passant square) - everything that determines
+ * whether two positions are "the same" for repetition purposes, i.e.
+ * FEN minus the halfmove/fullmove counters. */
+static void buildPositionKey(const BoardState *board, char *buf, size_t bufSize)
 {
     char placement[80];
     size_t pos = 0;
@@ -533,11 +537,24 @@ bool boardToFen(const BoardState *board, char *buf, size_t bufSize)
         epStr[2] = '\0';
     }
 
-    int written = snprintf(buf, bufSize, "%s %c %s %s %d %d",
-                            placement,
-                            board->currentPlayer == WHITE ? 'w' : 'b',
-                            castlingStr, epStr,
-                            board->halfmoveClock, board->fullmoveNumber);
+    snprintf(buf, bufSize, "%s %c %s %s",
+             placement,
+             board->currentPlayer == WHITE ? 'w' : 'b',
+             castlingStr, epStr);
+}
+
+void boardToPositionKey(const BoardState *board, char *buf, size_t bufSize)
+{
+    buildPositionKey(board, buf, bufSize);
+}
+
+bool boardToFen(const BoardState *board, char *buf, size_t bufSize)
+{
+    char key[FEN_MAX_LEN];
+    buildPositionKey(board, key, sizeof(key));
+
+    int written = snprintf(buf, bufSize, "%s %d %d",
+                            key, board->halfmoveClock, board->fullmoveNumber);
 
     return written > 0 && (size_t)written < bufSize;
 }

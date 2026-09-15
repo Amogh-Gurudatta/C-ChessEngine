@@ -15,6 +15,7 @@ A high-performance, console-based chess engine written entirely in C. This proje
   * **MVV-LVA move ordering** to improve pruning efficiency
 * **Tapered Evaluation:** Blends **Middlegame (MG)** and **Endgame (EG)** heuristics dynamically based on remaining material.
 * **Game Persistence:** Save and load game states through a simple `board.txt` file.
+* **Full Draw Detection:** Checkmate, stalemate, the 50-move rule, insufficient material, and threefold repetition are all detected and end the game automatically.
 * **Standard Notation:** Accepts and prints Standard Algebraic Notation (`e4`, `Nf3`, `O-O`), and can import/export real FEN and PGN.
 * **Lichess Board API (optional):** Play a live Lichess game from the terminal (see [Playing on Lichess](#playing-on-lichess)).
 

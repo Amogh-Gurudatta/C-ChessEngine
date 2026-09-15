@@ -45,6 +45,12 @@ bool boardToFen(const BoardState *board, char *buf, size_t bufSize);
 /* Parses a standard FEN string into board. */
 bool fenToBoard(const char *fen, BoardState *board);
 
+/* Builds a key identifying the position for threefold-repetition purposes:
+ * piece placement, side to move, castling rights, and en-passant square -
+ * i.e. FEN without the halfmove/fullmove counters, since those don't
+ * affect whether two positions count as "the same" for repetition. */
+void boardToPositionKey(const BoardState *board, char *buf, size_t bufSize);
+
 /* ---------------- PGN ---------------- */
 
 #define SAN_MAX_LEN 12

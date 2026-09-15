@@ -213,6 +213,65 @@ static void test_fen_roundtrip(void)
     CHECK(strcmp(buf, fenEnPassant) == 0, "FEN with en-passant target round-trips byte-for-byte");
 }
 
+/* ---------------- Position key / repetition ---------------- */
+
+static int countKeyOccurrences(char keys[][FEN_MAX_LEN], int count, const char *key)
+{
+    int n = 0;
+    for (int i = 0; i < count; i++)
+    {
+        if (strcmp(keys[i], key) == 0)
+            n++;
+    }
+    return n;
+}
+
+static void test_position_key_repetition(void)
+{
+    SECTION("boardToPositionKey ignores clocks and supports repetition detection");
+
+    /* Faithfully reproduces the exact scenario the real game loop tracks:
+     * both kings shuffle back and forth, and the same position (by piece
+     * placement/side-to-move/castling/en-passant) recurs a third time,
+     * even though the halfmove/fullmove clocks keep advancing throughout. */
+    BoardState board;
+    CHECK(fenToBoard("7k/8/8/8/8/8/6PP/7K w - - 0 1", &board), "fenToBoard parses the king-shuffle fixture");
+
+    char keys[9][FEN_MAX_LEN];
+    boardToPositionKey(&board, keys[0], FEN_MAX_LEN);
+
+    Move shuffle[8] = {
+        {{7, 7}, {7, 6}, EMPTY, MOVE_NORMAL}, // Kh1-g1
+        {{0, 7}, {0, 6}, EMPTY, MOVE_NORMAL}, // Kh8-g8
+        {{7, 6}, {7, 7}, EMPTY, MOVE_NORMAL}, // Kg1-h1
+        {{0, 6}, {0, 7}, EMPTY, MOVE_NORMAL}, // Kg8-h8
+        {{7, 7}, {7, 6}, EMPTY, MOVE_NORMAL},
+        {{0, 7}, {0, 6}, EMPTY, MOVE_NORMAL},
+        {{7, 6}, {7, 7}, EMPTY, MOVE_NORMAL},
+        {{0, 6}, {0, 7}, EMPTY, MOVE_NORMAL},
+    };
+
+    for (int i = 0; i < 8; i++)
+    {
+        makeMove(&board, shuffle[i]);
+        boardToPositionKey(&board, keys[i + 1], FEN_MAX_LEN);
+    }
+
+    CHECK(strcmp(keys[0], keys[4]) == 0, "the position after one full king round-trip matches the start");
+    CHECK(strcmp(keys[0], keys[8]) == 0, "the position after a second round-trip matches the start again");
+
+    char fenNow[FEN_MAX_LEN], fenStart[FEN_MAX_LEN];
+    boardToFen(&board, fenNow, sizeof(fenNow));
+    BoardState freshStart;
+    fenToBoard("7k/8/8/8/8/8/6PP/7K w - - 0 1", &freshStart);
+    boardToFen(&freshStart, fenStart, sizeof(fenStart));
+    CHECK(strcmp(fenStart, fenNow) != 0,
+          "the halfmove/fullmove clocks differ after the round-trips, proving the key must ignore them");
+
+    CHECK(countKeyOccurrences(keys, 9, keys[0]) == 3,
+          "the starting position recurs a third time, which is what triggers a threefold-repetition draw");
+}
+
 /* ---------------- PGN ---------------- */
 
 static void test_pgn_export(void)
@@ -256,5 +315,6 @@ void run_notation_tests(void)
     test_san_checkmate();
     test_fen_start_position();
     test_fen_roundtrip();
+    test_position_key_repetition();
     test_pgn_export();
 }

@@ -96,10 +96,36 @@ static void test_stalemate_has_no_legal_moves(void)
     CHECK(moves.count == 0, "the stalemated side has zero legal moves");
 }
 
+static void test_insufficient_material(void)
+{
+    SECTION("isInsufficientMaterial");
+
+    BoardState kingsOnly;
+    fenToBoard("4k3/8/8/8/8/8/8/4K3 w - - 0 1", &kingsOnly);
+    CHECK(isInsufficientMaterial(&kingsOnly), "king vs king is insufficient material");
+
+    BoardState kingAndKnight;
+    fenToBoard("4k3/8/8/8/8/8/8/3NK3 w - - 0 1", &kingAndKnight);
+    CHECK(isInsufficientMaterial(&kingAndKnight), "king+knight vs king is insufficient material");
+
+    BoardState kingAndBishop;
+    fenToBoard("4k3/8/8/8/8/8/8/3BK3 w - - 0 1", &kingAndBishop);
+    CHECK(isInsufficientMaterial(&kingAndBishop), "king+bishop vs king is insufficient material");
+
+    BoardState kingAndPawn;
+    fenToBoard("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1", &kingAndPawn);
+    CHECK(!isInsufficientMaterial(&kingAndPawn), "a lone pawn on the board is sufficient material");
+
+    BoardState twoKnights;
+    fenToBoard("4k3/8/8/8/8/8/8/2NNK3 w - - 0 1", &twoKnights);
+    CHECK(!isInsufficientMaterial(&twoKnights), "two minor pieces are treated as sufficient material");
+}
+
 void run_movegen_tests(void)
 {
     test_perft_start_position();
     test_pinned_piece_cannot_move();
     test_checkmate_has_no_legal_moves();
     test_stalemate_has_no_legal_moves();
+    test_insufficient_material();
 }

@@ -64,7 +64,6 @@ static void generateKnightMoves(BoardState *board, MoveList *list, int r, int c)
 static void generateKingMoves(BoardState *board, MoveList *list, int r, int c);
 static void generateSlidingMoves(BoardState *board, MoveList *list, int r, int c);
 static void addMove(BoardState *board, MoveList *list, Move move);
-static bool isInsufficientMaterial(BoardState *board);
 
 /* ========================================================================== */
 /* 1. ROOT MOVE SEARCH (Entry Point)                                          */
@@ -594,7 +593,7 @@ static void generateSlidingMoves(BoardState *board, MoveList *list, int r, int c
 }
 
 // --- Insufficient Material (Draw) ---
-static bool isInsufficientMaterial(BoardState *board)
+bool isInsufficientMaterial(BoardState *board)
 {
     int minorPieceCount = 0;
 

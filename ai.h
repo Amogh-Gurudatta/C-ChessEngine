@@ -2,6 +2,7 @@
 #define AI_H
 
 #include "structs.h"
+#include <stdbool.h>
 
 /**
  * @brief Finds the best move for the current player using the Negamax algorithm.
@@ -16,5 +17,9 @@ Move findBestMove(BoardState *board);
 
 /* Expose helper to allow callers to obtain the list of legal moves */
 MoveList generateAllLegalMoves(BoardState *board);
+
+/* Expose the draw-by-insufficient-material check so the game loop can
+ * declare it as a real draw, not just use it as a search heuristic. */
+bool isInsufficientMaterial(BoardState *board);
 
 #endif // AI_H
