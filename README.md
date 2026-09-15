@@ -143,6 +143,18 @@ Moves you type (long algebraic or SAN) are sent to Lichess; your opponent's move
 
 ---
 
+## **Running Tests**
+
+The project has a lightweight, dependency-free unit test suite covering every module (move generation, `makeMove`/`undoMove`, evaluation, save/load, notation, and the search) except `lichess.c`, which needs a live network connection and account.
+
+```bash
+make test
+```
+
+This builds `build/run_tests` and runs it, printing a pass/fail summary. It includes a [perft](https://www.chessprogramming.org/Perft) check (`perft(3) == 8902` from the starting position), which is a strong end-to-end regression test for the legal move generator.
+
+---
+
 ## **Cleaning Up**
 
 Remove build artifacts:

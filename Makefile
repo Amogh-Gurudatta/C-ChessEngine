@@ -38,7 +38,7 @@ DEP_FLAGS := -MMD -MP
 
 # Final Compiler Flags
 # (Includes directories, warnings, standard, and dependency logic)
-CFLAGS := $(WARNINGS) $(STD_FLAG) $(DEP_FLAGS)
+CFLAGS := -I$(SRC_DIR) $(WARNINGS) $(STD_FLAG) $(DEP_FLAGS)
 
 # Linker flags (if you need -lm for math, add it here)
 LDFLAGS :=
@@ -83,6 +83,29 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 # Include dependencies (if they exist) to trigger recompilation when headers change
 -include $(DEPS)
 
+# --- 5. Unit Tests ---
+# Lightweight, dependency-free tests covering every module except the
+# network/hardware-dependent lichess.c and the main.c I/O loop itself.
+
+TEST_SRCS := $(wildcard tests/*.c)
+TEST_OBJS := $(BUILD_DIR)/notation.o $(BUILD_DIR)/ai.o $(BUILD_DIR)/game.o \
+             $(BUILD_DIR)/eval.o $(BUILD_DIR)/fileio.o \
+             $(TEST_SRCS:tests/%.c=$(BUILD_DIR)/tests/%.o)
+TEST_BIN := $(BUILD_DIR)/run_tests
+
+$(BUILD_DIR)/tests/%.o: tests/%.c
+	@mkdir -p $(dir $@)
+	@echo "Compiling $<..."
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(TEST_BIN): $(TEST_OBJS)
+	@echo "Linking $@"
+	@$(CC) $(TEST_OBJS) -o $@ $(LDFLAGS)
+
+test: $(TEST_BIN)
+	@echo "Running tests..."
+	@./$(TEST_BIN)
+
 # --- Helper Targets ---
 
 # Run the game
@@ -106,7 +129,8 @@ help:
 	@echo "  make          : Build the release version (optimized)"
 	@echo "  make DEBUG=1  : Build the debug version (with symbols)"
 	@echo "  make run      : Build and run the game"
+	@echo "  make test     : Build and run the unit tests (notation.c: SAN/FEN/PGN)"
 	@echo "  make clean    : Remove compiled files"
 	@echo "  make distclean: Remove compiled files along with saved board"
 
-.PHONY: all clean distclean run help
+.PHONY: all clean distclean run help test
