@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <limits.h>
+#include <time.h>
 
 #include "ai.h"
 #include "eval.h"
@@ -40,10 +41,14 @@
  * sides. Adjustable at runtime via setSearchDepth() (see ai.h).
  */
 #define DEFAULT_SEARCH_DEPTH 6
+#define DEFAULT_SEARCH_TIME_LIMIT 5.0 /* seconds; <= 0 disables the cap */
 #define INFINITY_SCORE 1000000
 #define MATE_VALUE (INFINITY_SCORE - 1000)
 
 static int searchDepth = DEFAULT_SEARCH_DEPTH;
+static double searchTimeLimitSeconds = DEFAULT_SEARCH_TIME_LIMIT;
+static clock_t searchStartTime;
+static bool searchAborted;
 
 void setSearchDepth(int depth)
 {
@@ -54,6 +59,48 @@ void setSearchDepth(int depth)
 int getSearchDepth(void)
 {
     return searchDepth;
+}
+
+void setSearchTimeLimit(double seconds)
+{
+    searchTimeLimitSeconds = seconds;
+}
+
+double getSearchTimeLimit(void)
+{
+    return searchTimeLimitSeconds;
+}
+
+/**
+ * @brief True once the search has been running longer than the configured
+ * time limit. A limit of 0 or less means "no cap".
+ */
+static bool searchTimeExpired(void)
+{
+    if (searchTimeLimitSeconds <= 0)
+        return false;
+    double elapsedSeconds = (double)(clock() - searchStartTime) / CLOCKS_PER_SEC;
+    return elapsedSeconds >= searchTimeLimitSeconds;
+}
+
+/* Checking the clock on every single node would add needless overhead in
+ * tight tactical sequences (quiescence can visit many nodes very quickly),
+ * so it's only actually polled once every TIME_CHECK_INTERVAL calls. */
+#define TIME_CHECK_INTERVAL 2048
+static long nodesSinceTimeCheck = 0;
+
+static bool searchShouldStop(void)
+{
+    if (searchAborted)
+        return true;
+
+    if (++nodesSinceTimeCheck >= TIME_CHECK_INTERVAL)
+    {
+        nodesSinceTimeCheck = 0;
+        if (searchTimeExpired())
+            searchAborted = true;
+    }
+    return searchAborted;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -84,62 +131,88 @@ static void addMove(BoardState *board, MoveList *list, Move move);
 /* ========================================================================== */
 
 /**
- * @brief Calculates the best move for the current player using NegaMax.
- * This function is the "Root" of the search tree.
+ * @brief Calculates the best move for the current player using iterative-
+ * deepening NegaMax: it searches depth 1, then 2, then 3, and so on up to
+ * searchDepth, keeping the best move from the last FULLY completed depth.
+ * This lets a time cap (setSearchTimeLimit) interrupt the search between (or
+ * during) depths and still return a sound move, instead of either blocking
+ * indefinitely at a high depth or having no time awareness at all.
  * * @param board The current state of the game board.
  * @return The optimal Move found.
  */
 Move findBestMove(BoardState *board)
 {
+    searchStartTime = clock();
+    searchAborted = false;
+    nodesSinceTimeCheck = 0;
+
     Move bestMove;
     bestMove.from = (Position){-1, -1}; // Initialize to invalid to detect errors
 
-    // Initialize Alpha (Lower Bound) and Beta (Upper Bound)
-    int alpha = -INFINITY_SCORE;
-    int beta = INFINITY_SCORE;
-    int bestVal = -INFINITY_SCORE;
-
     // 1. Generate all legal moves
     MoveList legalMoves = generateAllLegalMoves(board);
+    if (legalMoves.count == 0)
+        return bestMove;
 
-    // 2. Sort moves: Check Captures first!
-    // Finding a good move early allows Alpha-Beta to prune bad branches later.
+    // Guarantee a legal move is always returned, even if the very first
+    // depth gets interrupted before finishing.
+    bestMove = legalMoves.moves[0];
+
+    // Sort moves: Check Captures first! Finding a good move early allows
+    // Alpha-Beta to prune bad branches later. Ordering is a static heuristic
+    // (doesn't depend on search depth), so this only needs doing once.
     scoreMoves(board, &legalMoves);
 
-    // 3. Iterate through all root moves
-    for (int i = 0; i < legalMoves.count; i++)
+    for (int depth = 1; depth <= searchDepth; depth++)
     {
-        Move currentMove = legalMoves.moves[i];
+        int alpha = -INFINITY_SCORE;
+        int beta = INFINITY_SCORE;
+        int bestValThisDepth = -INFINITY_SCORE;
+        Move bestMoveThisDepth = bestMove;
+        bool depthCompleted = true;
 
-        makeMove(board, currentMove);
-
-        /* * RECURSIVE CALL (NegaMax Variant):
-         * value = -negamax(...)
-         * We flip the result because the opponent's score is bad for us.
-         * We swap -beta and -alpha to reflect the perspective shift.
-         */
-        int val = -negamax(board, searchDepth - 1, -beta, -alpha, 1);
-
-        undoMove(board, currentMove);
-
-        // Update best move found so far
-        if (val > bestVal)
+        for (int i = 0; i < legalMoves.count; i++)
         {
-            bestVal = val;
-            bestMove = currentMove;
+            Move currentMove = legalMoves.moves[i];
+
+            makeMove(board, currentMove);
+
+            /* * RECURSIVE CALL (NegaMax Variant):
+             * value = -negamax(...)
+             * We flip the result because the opponent's score is bad for us.
+             * We swap -beta and -alpha to reflect the perspective shift.
+             */
+            int val = -negamax(board, depth - 1, -beta, -alpha, 1);
+
+            undoMove(board, currentMove);
+
+            if (searchAborted)
+            {
+                // This depth's results are incomplete/unreliable - discard
+                // them and keep whatever the last full depth found.
+                depthCompleted = false;
+                break;
+            }
+
+            if (val > bestValThisDepth)
+            {
+                bestValThisDepth = val;
+                bestMoveThisDepth = currentMove;
+            }
+
+            if (val > alpha)
+            {
+                alpha = val;
+            }
         }
 
-        // Update Alpha (The best score we can guarantee)
-        if (val > alpha)
+        if (depthCompleted)
         {
-            alpha = val;
+            bestMove = bestMoveThisDepth;
         }
-    }
 
-    // Fail-safe: If no moves improved -INFINITY (rare/bug), pick the first legal move.
-    if (bestMove.from.row == -1 && legalMoves.count > 0)
-    {
-        bestMove = legalMoves.moves[0];
+        if (searchAborted || searchTimeExpired())
+            break;
     }
 
     return bestMove;
@@ -159,6 +232,9 @@ Move findBestMove(BoardState *board)
  */
 static int quiescence(BoardState *board, int alpha, int beta)
 {
+    if (searchShouldStop())
+        return 0;
+
     // 1. STAND-PAT:
     // Get the static score of the board.
     // evaluateBoard() returns (White - Black).
@@ -215,6 +291,9 @@ static int quiescence(BoardState *board, int alpha, int beta)
  */
 static int negamax(BoardState *board, int depth, int alpha, int beta, int ply)
 {
+    if (searchShouldStop())
+        return 0;
+
     // BASE CASE 1: Draw Rules (50-move rule or Insufficient Material)
     if (board->halfmoveClock >= 100 || isInsufficientMaterial(board))
         return 0;

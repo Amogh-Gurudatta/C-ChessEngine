@@ -13,8 +13,10 @@ A high-performance, console-based chess engine written entirely in C. This proje
 * **Advanced Search Algorithms:**
 
   * **NegaMax + Alpha-Beta Pruning** for efficient game‑tree search
+  * **Iterative Deepening** with an optional time cap, so the engine can stop and return its best move so far instead of searching indefinitely
   * **Quiescence Search** to reduce the horizon effect
   * **MVV-LVA move ordering** to improve pruning efficiency
+* **Adjustable Difficulty:** Search depth and/or a per-move time budget can be set from the command line or mid-game.
 * **Tapered Evaluation:** Blends **Middlegame (MG)** and **Endgame (EG)** heuristics dynamically based on remaining material.
 * **Game Persistence:** Save and load game states through a simple `board.txt` file.
 * **Full Draw Detection:** Checkmate, stalemate, the 50-move rule, insufficient material, and threefold repetition are all detected and end the game automatically.
@@ -93,15 +95,20 @@ You play as **White**, and the engine plays as **Black**.
 | **pgn**       | Export the game so far to `game.pgn`                           | `pgn`          |
 | **undo**      | Take back your last move (and the engine's reply)              | `undo`         |
 | **depth**     | View or change the engine's search depth (higher = stronger, slower) | `depth`  |
+| **time**      | View or change the engine's per-move time cap in seconds (0 disables it) | `time` |
+| **resign**    | Resign the game (Black/AI wins)                                | `resign`       |
+| **draw**      | Offer a draw; the engine accepts unless it's clearly ahead     | `draw`         |
 | **quit**      | Exit the engine                                                | `quit`         |
 
 A finished game is automatically exported to `game.pgn`. The game ends automatically on checkmate, stalemate, the 50-move rule, insufficient material, or threefold repetition.
 
-You can also start the engine directly from a FEN string and/or with a custom search depth (the default is 6 plies):
+You can also start the engine directly from a FEN string, with a custom search depth (default 6 plies), and/or with a per-move time cap in seconds (default 5s; the engine searches iteratively deeper and returns its best move so far once the cap is hit):
 
 ```bash
-./build/chess_engine --fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" --depth 4
+./build/chess_engine --fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" --depth 4 --time 3
 ```
+
+The board is drawn with Unicode chess glyphs, colored automatically when stdout is a real terminal. Set the `NO_COLOR` environment variable to disable the coloring (colors are always off when output is redirected/piped).
 
 ---
 

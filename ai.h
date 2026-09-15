@@ -27,4 +27,11 @@ bool isInsufficientMaterial(BoardState *board);
 void setSearchDepth(int depth);
 int getSearchDepth(void);
 
+/* Time cap for findBestMove, in seconds: it iteratively deepens (depth 1, 2,
+ * 3, ...) up to the configured search depth, and returns the best move from
+ * the last depth that finished before this many seconds elapsed. A value of
+ * 0 or less disables the cap (search purely by depth). */
+void setSearchTimeLimit(double seconds);
+double getSearchTimeLimit(void);
+
 #endif // AI_H

@@ -16,6 +16,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #include "structs.h"
 #include "fileio.h"
@@ -32,24 +33,84 @@
 /* ========================================================================== */
 
 /**
+ * @brief Maps a piece to a Unicode chess glyph (e.g. white king -> "♔").
+ * White pieces use the "outline" glyphs and black pieces the "filled" ones,
+ * the standard convention for rendering chess in Unicode.
+ */
+static const char *pieceToGlyph(Piece p)
+{
+    switch (p.type)
+    {
+    case PAWN:
+        return (p.color == WHITE) ? "♙" : "♟";
+    case KNIGHT:
+        return (p.color == WHITE) ? "♘" : "♞";
+    case BISHOP:
+        return (p.color == WHITE) ? "♗" : "♝";
+    case ROOK:
+        return (p.color == WHITE) ? "♖" : "♜";
+    case QUEEN:
+        return (p.color == WHITE) ? "♕" : "♛";
+    case KING:
+        return (p.color == WHITE) ? "♔" : "♚";
+    default:
+        return "·"; // middle dot for an empty square
+    }
+}
+
+/**
+ * @brief Whether the board should be printed with ANSI background/foreground
+ * colors. Disabled when stdout isn't a real terminal (e.g. piped to a file
+ * or another process) or when the NO_COLOR convention (https://no-color.org)
+ * is requested, so colored escape codes never leak into redirected output.
+ */
+static bool boardShouldUseColor(void)
+{
+    static bool checked = false;
+    static bool useColor = false;
+    if (!checked)
+    {
+        useColor = (getenv("NO_COLOR") == NULL) && isatty(STDOUT_FILENO);
+        checked = true;
+    }
+    return useColor;
+}
+
+/**
  * @brief Prints the current board state to the console.
- * Includes Rank numbers (1-8) and File letters (a-h).
+ * Includes Rank numbers (1-8) and File letters (a-h). Uses Unicode chess
+ * glyphs, with alternating light/dark square colors when the terminal
+ * supports it (see boardShouldUseColor).
  */
 void printBoard(BoardState *board)
 {
-    printf("\n   +-----------------+\n");
+    bool color = boardShouldUseColor();
+
+    printf("\n");
     // Iterate Rows from 0 (Rank 8) to 7 (Rank 1)
     for (int r = 0; r < 8; r++)
     {
-        printf(" %d | ", 8 - r); // Print Rank Number
+        printf(" %d ", 8 - r); // Print Rank Number
         for (int c = 0; c < 8; c++)
         {
-            printf("%c ", pieceToChar(board->squares[r][c]));
+            Piece p = board->squares[r][c];
+            const char *glyph = pieceToGlyph(p);
+
+            if (color)
+            {
+                bool lightSquare = ((r + c) % 2 == 0);
+                const char *bg = lightSquare ? "\033[48;5;180m" : "\033[48;5;94m";
+                const char *fg = (p.color == WHITE) ? "\033[97m" : "\033[30m";
+                printf("%s%s %s \033[0m", bg, fg, glyph);
+            }
+            else
+            {
+                printf(" %s ", glyph);
+            }
         }
-        printf("|\n");
+        printf("\n");
     }
-    printf("   +-----------------+\n");
-    printf("     a b c d e f g h\n");
+    printf("    a  b  c  d  e  f  g  h\n");
 
     printf("Side to move: %s\n", board->currentPlayer == WHITE ? "White" : "Black");
 }
@@ -121,6 +182,16 @@ int main(int argc, char *argv[])
             setSearchDepth(depth);
         else
             printf("Ignoring invalid --depth value; must be a positive integer.\n");
+    }
+
+    const char *timeArg = findArgValue(argc, argv, "--time");
+    if (timeArg != NULL)
+    {
+        double seconds = atof(timeArg);
+        if (seconds > 0)
+            setSearchTimeLimit(seconds);
+        else
+            printf("Ignoring invalid --time value; must be a positive number of seconds.\n");
     }
 
 #ifdef LICHESS_ENABLED
@@ -322,6 +393,37 @@ int main(int argc, char *argv[])
                 printMoveLog(sanLog, sanCount);
                 continue;
             }
+            if (!strcmp(input, "resign"))
+            {
+                printf("\n============================\n");
+                printf("You resigned. Black (AI) wins.\n");
+                printf("============================\n");
+                result = "0-1";
+                remove("board.txt");
+                break;
+            }
+            if (!strcmp(input, "draw"))
+            {
+                // evaluateBoard() is from White's perspective (positive favors
+                // White); the AI's own advantage is the negation of that.
+                // It accepts a draw offer unless it's clearly ahead - a simple
+                // stand-in for real draw-offer negotiation.
+                int aiAdvantage = -evaluateBoard(&board);
+                if (aiAdvantage < 150)
+                {
+                    printf("\n============================\n");
+                    printf("The AI accepts your draw offer.\n");
+                    printf("============================\n");
+                    result = "1/2-1/2";
+                    remove("board.txt");
+                    break;
+                }
+                else
+                {
+                    printf("The AI declines your draw offer - it likes its position too much.\n");
+                }
+                continue;
+            }
             if (!strcmp(input, "undo"))
             {
                 // fenHistory[0] is the starting/checkpoint position, so that
@@ -366,6 +468,35 @@ int main(int argc, char *argv[])
                     {
                         printf("Please enter a positive integer.\n");
                     }
+                }
+                continue;
+            }
+            if (!strcmp(input, "time"))
+            {
+                // Consume the rest of the current line before reading a fresh one.
+                int ch;
+                while ((ch = getchar()) != '\n' && ch != EOF)
+                {
+                }
+
+                char line[32];
+                double currentLimit = getSearchTimeLimit();
+                if (currentLimit > 0)
+                    printf("Current search time cap: %.1fs. Enter a new value in seconds, "
+                            "0 to disable it, or press Enter to keep it: ",
+                            currentLimit);
+                else
+                    printf("Search time cap is disabled (searching purely by depth). "
+                            "Enter a value in seconds, or press Enter to keep it disabled: ");
+
+                if (fgets(line, sizeof(line), stdin) && line[0] != '\n')
+                {
+                    double seconds = atof(line);
+                    setSearchTimeLimit(seconds);
+                    if (seconds > 0)
+                        printf("Search time cap set to %.1fs.\n", seconds);
+                    else
+                        printf("Search time cap disabled.\n");
                 }
                 continue;
             }
