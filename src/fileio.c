@@ -35,7 +35,7 @@ char pieceToChar(Piece p)
     default:
         c = '?';
     }
-    return (p.color == WHITE) ? toupper(c) : c;
+    return (p.color == WHITE) ? (char)toupper((unsigned char)c) : c;
 }
 
 Piece charToPiece(char c)
@@ -45,7 +45,7 @@ Piece charToPiece(char c)
         return p;
 
     PieceColor color = isupper(c) ? WHITE : BLACK;
-    char lower = tolower(c);
+    char lower = (char)tolower((unsigned char)c);
 
     PieceType type;
     switch (lower)
@@ -101,8 +101,8 @@ static void posToAlgebraic(Position pos, char out[3])
         strcpy(out, "-");
         return;
     }
-    out[0] = 'a' + pos.col;
-    out[1] = '8' - pos.row;
+    out[0] = (char)('a' + pos.col);
+    out[1] = (char)('8' - pos.row);
     out[2] = '\0';
 }
 

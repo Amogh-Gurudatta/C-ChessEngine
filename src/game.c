@@ -277,6 +277,10 @@ void makeMove(BoardState *board, Move move)
 
 void undoMove(BoardState *board, Move move)
 {
+    // 'move' is intentionally unused - see game.h's docstring for why the
+    // actual undo data comes from the internal history stack instead.
+    (void)move;
+
     // Pop history
     if (historyTop <= 0)
     {
