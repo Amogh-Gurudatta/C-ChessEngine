@@ -39,10 +39,11 @@ README.md    User-facing: build, install, play
               |               |
               +------+--------+
                      |
-              +------+-------+
-              |               |
-           main.c         lichess.c
-      (console REPL)   (Lichess Board API, optional)
+           +---------+---------+
+           |         |         |
+        main.c    lichess.c   uci.c
+    (console REPL) (Lichess,  (UCI protocol
+                    optional)  front end)
 ```
 
 - **structs.h** defines every shared type (`Piece`, `Move`, `MoveList`, `BoardState`, ...) and nothing else — no functions, no logic. Everything else depends on it. See [BOARD_AND_RULES.md](BOARD_AND_RULES.md) for the type definitions themselves, especially the row/column coordinate convention, which is the single most important invariant in the codebase to get right.
@@ -54,6 +55,7 @@ README.md    User-facing: build, install, play
 - **timecontrol.c** is a small, self-contained Fischer clock (remaining time + increment per side), shared by local play and Lichess play. See [ONLINE_PLAY.md](ONLINE_PLAY.md).
 - **main.c** is the console REPL: the game loop, command dispatch (`save`, `fen`, `undo`, `depth`, `time`, `resign`, `draw`, ...), draw-condition checks, and clock bookkeeping. It's intentionally "thin" — all the real logic lives in the modules above; `main.c` mostly wires them together and handles I/O.
 - **lichess.c** (only compiled with `make LICHESS=1`) is the Lichess Board API client: HTTP via libcurl, a small hand-rolled JSON field extractor (no full parser, since the API's messages are shallow enough not to need one), and either relaying typed moves or (in `--bot` mode) calling `ai.c`'s `findBestMoveTimed` directly. See [ONLINE_PLAY.md](ONLINE_PLAY.md).
+- **uci.c** (`--uci`, always compiled — no extra dependency) is a minimal UCI protocol front end, so any UCI GUI or match runner (e.g. cutechess) can drive the engine instead of this project's own REPL. It's a peer of `main.c`, not a variant of it: a separate `runUciLoop()` with its own `BoardState` and stdin/stdout loop, wired in before `main()` does anything else. See [UCI.md](UCI.md).
 
 ## Data flow: a human move, end to end
 

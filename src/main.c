@@ -27,6 +27,7 @@
 #include "eval.h"
 #include "notation.h"
 #include "timecontrol.h"
+#include "uci.h"
 #ifdef LICHESS_ENABLED
 #include "lichess.h"
 #endif
@@ -235,6 +236,22 @@ static const char *roleFor(PieceColor color, PieceColor humanColor)
 
 int main(int argc, char *argv[])
 {
+    // Checked before anything else, and before any other flag prints a
+    // single byte to stdout: a UCI-speaking GUI/match runner (e.g.
+    // cutechess-cli) expects the very first thing on stdout to be part of
+    // the UCI handshake, not this project's own banner/prompts. A plain
+    // boolean flag like "--bot", so it's checked by scanning argv directly
+    // rather than via findArgValue(), which requires a following value and
+    // would miss "--uci" as the very last (or only) argument.
+    for (int i = 1; i < argc; i++)
+    {
+        if (!strcmp(argv[i], "--uci"))
+        {
+            runUciLoop();
+            return 0;
+        }
+    }
+
     const char *depthArg = findArgValue(argc, argv, "--depth");
     if (depthArg != NULL)
     {

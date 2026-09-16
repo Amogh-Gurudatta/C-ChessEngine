@@ -11,6 +11,7 @@ Start with [**ARCHITECTURE.md**](ARCHITECTURE.md) for the big picture, then dig 
 | [SEARCH_AND_EVAL.md](SEARCH_AND_EVAL.md) | NegaMax search, alpha-beta, quiescence, iterative deepening, time management, evaluation | `ai.h`/`ai.c`, `eval.h`/`eval.c` |
 | [NOTATION_AND_FORMATS.md](NOTATION_AND_FORMATS.md) | Long algebraic, SAN, FEN, PGN, and the older custom save format | `notation.h`/`notation.c`, `fileio.h`/`fileio.c` |
 | [ONLINE_PLAY.md](ONLINE_PLAY.md) | Lichess Board API integration, bot mode, chess clocks | `lichess.h`/`lichess.c`, `timecontrol.h`/`timecontrol.c` |
+| [UCI.md](UCI.md) | UCI protocol front end, for driving the engine from cutechess/Arena/etc. | `uci.h`/`uci.c` |
 | [TESTING.md](TESTING.md) | Test harness design, what's covered vs. not, how to add a test | `tests/` |
 
 Every header file (`include/*.h`) also carries a `@file` docstring at the top pointing back to the relevant doc here, and every exported function has its own Doxygen comment. If you have Doxygen installed, `make docs` generates browsable HTML from those comments into `build/docs/html/` (see [ARCHITECTURE.md](ARCHITECTURE.md#generated-api-docs)).

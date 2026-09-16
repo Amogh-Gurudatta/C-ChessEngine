@@ -38,6 +38,7 @@ All of these link into one binary (`build/run_tests`, built by `make test`) toge
 
 - **`lichess.c`** needs a live network connection, a real Lichess account, and an API token — not appropriate for an automated, offline test suite. It's excluded from `TEST_OBJS` entirely (and from the `LICHESS=1` build's default test run — `make test` never links libcurl).
 - **`main.c`'s I/O loop itself** (the REPL, command dispatch, argv parsing) is thin glue over the modules that *are* tested — reading a line, dispatching to a well-tested function, printing the result. It's exercised manually (see the [README](../README.md#gameplay--commands) for the commands) rather than through the automated suite.
+- **`uci.c`** is the same kind of thin glue as `main.c`'s I/O loop, just over a different protocol (see [UCI.md](UCI.md)) — it parses a command, calls an already-tested `notation.c`/`ai.c` function, and prints the result. Verified manually by piping raw UCI commands to `./build/chess_engine --uci` and checking the responses, rather than through the automated suite.
 
 ## Running
 

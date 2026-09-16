@@ -26,6 +26,7 @@ This README covers building, installing, and playing. For how the engine works i
 * **Full Draw Detection:** Checkmate, stalemate, the 50-move rule, insufficient material, and threefold repetition are all detected and end the game automatically.
 * **Standard Notation:** Accepts and prints Standard Algebraic Notation (`e4`, `Nf3`, `O-O`), and can import/export real FEN and PGN.
 * **Lichess Board API (optional):** Play a live Lichess game from the terminal (see [Playing on Lichess](#playing-on-lichess)).
+* **UCI Support:** Speaks enough of the [UCI protocol](https://en.wikipedia.org/wiki/Universal_Chess_Interface) (`--uci`) to be run from a standard chess GUI or match runner like [cutechess](https://github.com/cutechess/cutechess) instead of this project's own REPL (see [Using a UCI GUI](#using-a-uci-gui)).
 
 ---
 
@@ -128,6 +129,7 @@ All optional; combine freely.
 | `--clock <min>+<inc>` | Play under a real Fischer clock instead of a flat time budget — see below | `--clock 5+3` |
 | `--lichess <gameId>` | Play a live Lichess game — needs `make LICHESS=1`, see below | `--lichess abcd1234` |
 | `--bot` | With `--lichess`: have the engine play its own moves | `--lichess abcd1234 --bot` |
+| `--uci` | Speak UCI on stdin/stdout instead of starting the REPL — see below | `--uci` |
 
 ## **Playing With a Real Chess Clock**
 
@@ -165,6 +167,22 @@ The Bot API allows all time controls except UltraBullet — bullet included. `./
 
 ---
 
+## **Using a UCI GUI**
+
+`--uci` puts the engine in [UCI protocol](https://en.wikipedia.org/wiki/Universal_Chess_Interface) mode — reading commands from stdin and replying on stdout — instead of starting the interactive REPL, so it can be driven by a standard chess GUI or match runner (e.g. [cutechess](https://github.com/cutechess/cutechess)) instead of a human typing moves. No build flag needed; it's always compiled in.
+
+In cutechess, add an engine with `build/chess_engine` as the command and `--uci` as its argument. For `cutechess-cli`:
+
+```bash
+cutechess-cli -engine cmd=build/chess_engine arg=--uci name=C-ChessEngine \
+              -engine cmd=/path/to/other/engine name=Other \
+              -each proto=uci tc=40/60 -rounds 10
+```
+
+Time controls (`wtime`/`btime`/`winc`/`binc`, `movetime`, or a fixed `depth`) are all supported — see [docs/UCI.md](docs/UCI.md) for exactly which commands are handled and the one real limitation (no true "stop" mid-search, since the search is a single blocking call rather than a background thread — this doesn't affect normal timed play, only pondering/infinite-analysis mode).
+
+---
+
 ## **Project Architecture**
 
 Full write-up (module diagram, data flow, key invariants): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Headers live in `include/`, implementation in `src/`.
@@ -180,6 +198,7 @@ Full write-up (module diagram, data flow, key invariants): [docs/ARCHITECTURE.md
 | **notation.c / notation.h** | Notation      | SAN parsing/printing, real FEN import/export, PGN export, long algebraic.     | [NOTATION_AND_FORMATS.md](docs/NOTATION_AND_FORMATS.md) |
 | **timecontrol.c / timecontrol.h** | Chess Clock | Fischer clock bookkeeping (remaining time, increment, flag-fall) shared by local and Lichess play. | [ONLINE_PLAY.md](docs/ONLINE_PLAY.md) |
 | **lichess.c / lichess.h** (optional) | Online Play | Board API client for playing a live Lichess game (optionally as a bot) from the terminal. | [ONLINE_PLAY.md](docs/ONLINE_PLAY.md) |
+| **uci.c / uci.h**       | UCI Front End     | Minimal UCI protocol loop, for driving the engine from cutechess/Arena/etc.   | [UCI.md](docs/UCI.md) |
 
 ---
 
