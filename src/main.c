@@ -4,7 +4,8 @@
  * Description: The main entry point for the Console Chess Engine.
  *
  * Responsibilities:
- * 1. Game Loop: Manages the flow between Human (White) and AI (Black).
+ * 1. Game Loop: Manages the flow between the Human and the AI, whichever
+ *    color each is playing (see --side).
  * 2. Input Parsing: Converts Algebraic Notation ("e2e4") into engine coordinates.
  * 3. Output: Displays the board and game status.
  * 4. Game Over Detection: Checks for Checkmate/Stalemate at the start of every turn.
@@ -83,24 +84,34 @@ static bool boardShouldUseColor(void)
  * Includes Rank numbers (1-8) and File letters (a-h). Uses Unicode chess
  * glyphs, with alternating light/dark square colors when the terminal
  * supports it (see boardShouldUseColor).
+ *
+ * @param board The position to display.
+ * @param perspective Whose side of the board to display it from: WHITE
+ * shows it the traditional way (rank 8 at the top); BLACK shows it rotated
+ * 180 degrees (rank 1 at the top, files h-a left to right), matching how
+ * it would look sitting across the board from White - standard practice
+ * when a human is playing Black, so the square someone reaches for is
+ * physically in the direction they'd expect.
  */
-void printBoard(BoardState *board)
+void printBoard(BoardState *board, PieceColor perspective)
 {
     bool color = boardShouldUseColor();
+    bool flipped = (perspective == BLACK);
 
     printf("\n");
-    // Iterate Rows from 0 (Rank 8) to 7 (Rank 1)
-    for (int r = 0; r < 8; r++)
+    for (int i = 0; i < 8; i++)
     {
+        int r = flipped ? (7 - i) : i;
         printf(" %d ", 8 - r); // Print Rank Number
-        for (int c = 0; c < 8; c++)
+        for (int j = 0; j < 8; j++)
         {
+            int c = flipped ? (7 - j) : j;
             Piece p = board->squares[r][c];
             const char *glyph = pieceToGlyph(p);
 
             if (color)
             {
-                bool lightSquare = ((r + c) % 2 == 0);
+                bool lightSquare = ((r + c) % 2 == 0); // a property of the square itself, not the viewing angle
                 const char *bg = lightSquare ? "\033[48;5;180m" : "\033[48;5;94m";
                 const char *fg = (p.color == WHITE) ? "\033[97m" : "\033[30m";
                 printf("%s%s %s \033[0m", bg, fg, glyph);
@@ -112,7 +123,7 @@ void printBoard(BoardState *board)
         }
         printf("\n");
     }
-    printf("    a  b  c  d  e  f  g  h\n");
+    printf(flipped ? "    h  g  f  e  d  c  b  a\n" : "    a  b  c  d  e  f  g  h\n");
 
     printf("Side to move: %s\n", board->currentPlayer == WHITE ? "White" : "Black");
 }
@@ -202,6 +213,23 @@ static void printClocks(ChessClock *matchClock)
 }
 
 /* ========================================================================== */
+/* SIDE-SELECTION HELPERS                                                     */
+/* ========================================================================== */
+
+static const char *colorName(PieceColor color)
+{
+    return (color == WHITE) ? "White" : "Black";
+}
+
+/** "You" if color is the human's side, "AI" otherwise - for messages like
+ * "Black (AI) wins" that need to say who's who regardless of which side
+ * the human chose to play. */
+static const char *roleFor(PieceColor color, PieceColor humanColor)
+{
+    return (color == humanColor) ? "You" : "AI";
+}
+
+/* ========================================================================== */
 /* MAIN LOOP                                                                  */
 /* ========================================================================== */
 
@@ -226,6 +254,17 @@ int main(int argc, char *argv[])
         else
             printf("Ignoring invalid --time value; must be a positive number of seconds.\n");
     }
+
+    // Which color the human plays; the AI takes the other one. Only
+    // meaningful for local play - Lichess assigns your color per-game.
+    PieceColor humanColor = WHITE;
+    const char *sideArg = findArgValue(argc, argv, "--side");
+    if (sideArg != NULL)
+    {
+        char firstChar = (char)tolower((unsigned char)sideArg[0]);
+        humanColor = (firstChar == 'b') ? BLACK : WHITE;
+    }
+    PieceColor aiColor = (humanColor == WHITE) ? BLACK : WHITE;
 
     bool clockEnabled = false;
     ChessClock matchClock;
@@ -312,7 +351,7 @@ int main(int argc, char *argv[])
     // 2. The Game Loop
     while (1)
     {
-        printBoard(&board);
+        printBoard(&board, humanColor);
         if (clockEnabled)
             printClocks(&matchClock);
 
@@ -327,9 +366,11 @@ int main(int argc, char *argv[])
         {
             if (isKingInCheck(&board, board.currentPlayer))
             {
-                // King is in check and has no moves => Checkmate
+                // King is in check and has no moves => Checkmate. The
+                // winner is whichever side isn't the one that's mated.
+                PieceColor winner = (board.currentPlayer == WHITE) ? BLACK : WHITE;
                 printf("\n============================\n");
-                printf("CHECKMATE! %s wins.\n", board.currentPlayer == WHITE ? "Black (AI)" : "White (You)");
+                printf("CHECKMATE! %s (%s) wins.\n", colorName(winner), roleFor(winner, humanColor));
                 printf("============================\n");
                 result = (board.currentPlayer == WHITE) ? "0-1" : "1-0";
             }
@@ -384,9 +425,9 @@ int main(int argc, char *argv[])
         // ---------------------------------------------------------
         // STEP 2: EXECUTE TURNS
         // ---------------------------------------------------------
-        if (board.currentPlayer == WHITE)
+        if (board.currentPlayer == humanColor)
         {
-            // --- HUMAN TURN (WHITE) ---
+            // --- HUMAN TURN ---
             printf("\nYour move (e.g. e2e4, e4, Nf3, quit): ");
             char input[32];
 
@@ -446,7 +487,9 @@ int main(int argc, char *argv[])
             }
             if (!strcmp(input, "pgn"))
             {
-                if (exportPgn("game.pgn", sanLog, sanCount, "Player", "AI", "*"))
+                const char *whiteName = (humanColor == WHITE) ? "Player" : "AI";
+                const char *blackName = (humanColor == WHITE) ? "AI" : "Player";
+                if (exportPgn("game.pgn", sanLog, sanCount, whiteName, blackName, "*"))
                     printf("Game record saved to game.pgn\n");
                 continue;
             }
@@ -458,19 +501,19 @@ int main(int argc, char *argv[])
             if (!strcmp(input, "resign"))
             {
                 printf("\n============================\n");
-                printf("You resigned. Black (AI) wins.\n");
+                printf("You resigned. %s (AI) wins.\n", colorName(aiColor));
                 printf("============================\n");
-                result = "0-1";
+                result = (aiColor == WHITE) ? "1-0" : "0-1";
                 remove("board.txt");
                 break;
             }
             if (!strcmp(input, "draw"))
             {
                 // evaluateBoard() is from White's perspective (positive favors
-                // White); the AI's own advantage is the negation of that.
-                // It accepts a draw offer unless it's clearly ahead - a simple
-                // stand-in for real draw-offer negotiation.
-                int aiAdvantage = -evaluateBoard(&board);
+                // White); the AI's own advantage is that score as seen from
+                // its own color. It accepts a draw offer unless it's clearly
+                // ahead - a simple stand-in for real draw-offer negotiation.
+                int aiAdvantage = (aiColor == WHITE) ? evaluateBoard(&board) : -evaluateBoard(&board);
                 if (aiAdvantage < 150)
                 {
                     printf("\n============================\n");
@@ -574,12 +617,12 @@ int main(int argc, char *argv[])
                 if (clockEnabled)
                 {
                     double elapsed = difftime(time(NULL), turnStartTime);
-                    if (!clockConsume(&matchClock, WHITE, elapsed))
+                    if (!clockConsume(&matchClock, humanColor, elapsed))
                     {
                         printf("\n============================\n");
-                        printf("TIME! You ran out of time. Black (AI) wins.\n");
+                        printf("TIME! You ran out of time. %s (AI) wins.\n", colorName(aiColor));
                         printf("============================\n");
-                        result = "0-1";
+                        result = (aiColor == WHITE) ? "1-0" : "0-1";
                         remove("board.txt");
                         break;
                     }
@@ -604,14 +647,14 @@ int main(int argc, char *argv[])
         }
         else
         {
-            // --- AI TURN (BLACK) ---
+            // --- AI TURN ---
             printf("\nAI is thinking...\n");
 
             // AI finds the best move: clock-aware (budgets its own thinking
             // time from the real clock) when a clock is running, or a plain
             // fixed-depth/fixed-cap search otherwise.
             Move best = clockEnabled
-                             ? findBestMoveTimed(&board, matchClock.blackSeconds, matchClock.incrementSeconds)
+                             ? findBestMoveTimed(&board, *clockTimeFor(&matchClock, aiColor), matchClock.incrementSeconds)
                              : findBestMove(&board);
 
             // Sanity check: Should never happen if game-over logic above is correct
@@ -627,12 +670,12 @@ int main(int argc, char *argv[])
             if (clockEnabled)
             {
                 double elapsed = difftime(time(NULL), turnStartTime);
-                if (!clockConsume(&matchClock, BLACK, elapsed))
+                if (!clockConsume(&matchClock, aiColor, elapsed))
                 {
                     printf("\n============================\n");
-                    printf("TIME! The AI ran out of time. White (You) wins.\n");
+                    printf("TIME! The AI ran out of time. %s (You) wins.\n", colorName(humanColor));
                     printf("============================\n");
-                    result = "1-0";
+                    result = (humanColor == WHITE) ? "1-0" : "0-1";
                     remove("board.txt");
                     break;
                 }
@@ -658,7 +701,9 @@ int main(int argc, char *argv[])
 
     if (sanCount > 0)
     {
-        if (exportPgn("game.pgn", sanLog, sanCount, "Player", "AI", result))
+        const char *whiteName = (humanColor == WHITE) ? "Player" : "AI";
+        const char *blackName = (humanColor == WHITE) ? "AI" : "Player";
+        if (exportPgn("game.pgn", sanLog, sanCount, whiteName, blackName, result))
             printf("Game record saved to game.pgn\n");
     }
 

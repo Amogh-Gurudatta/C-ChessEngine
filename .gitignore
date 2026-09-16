@@ -59,6 +59,7 @@ chess
 
 #savefiles
 board.txt
+game.pgn
 
 #build
 build/

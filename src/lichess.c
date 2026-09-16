@@ -16,7 +16,7 @@
 #define STREAM_BUF_SIZE 65536
 
 /* Defined in main.c; no dedicated UI header exists yet in this project. */
-void printBoard(BoardState *board);
+void printBoard(BoardState *board, PieceColor perspective);
 
 /* ---------------- Tiny flat JSON field extraction ----------------
  * Lichess's NDJSON lines are shallow enough that a substring search for
@@ -47,10 +47,42 @@ static bool jsonFindNestedString(const char *json, const char *outerKey, const c
 {
     char pattern[64];
     snprintf(pattern, sizeof(pattern), "\"%s\":{", outerKey);
-    const char *p = strstr(json, pattern);
-    if (p == NULL)
+    const char *objStart = strstr(json, pattern);
+    if (objStart == NULL)
         return false;
-    return jsonFindString(p, innerKey, out, outSize);
+    objStart += strlen(pattern) - 1; // back up to point at the '{' itself
+
+    // Bound the search to this object only (matching braces), so a field
+    // that's absent here (e.g. a null "id" on an AI opponent) can't leak
+    // into a later sibling object that happens to have the same key.
+    int depth = 0;
+    const char *p = objStart;
+    const char *objEnd = NULL;
+    for (; *p != '\0'; p++)
+    {
+        if (*p == '{')
+            depth++;
+        else if (*p == '}')
+        {
+            depth--;
+            if (depth == 0)
+            {
+                objEnd = p;
+                break;
+            }
+        }
+    }
+    if (objEnd == NULL)
+        return false;
+
+    size_t objLen = (size_t)(objEnd - objStart) + 1;
+    char scoped[512];
+    if (objLen >= sizeof(scoped))
+        objLen = sizeof(scoped) - 1;
+    memcpy(scoped, objStart, objLen);
+    scoped[objLen] = '\0';
+
+    return jsonFindString(scoped, innerKey, out, outSize);
 }
 
 /* Numeric fields (wtime/btime/winc/binc are plain milliseconds, e.g.
@@ -95,11 +127,22 @@ static size_t httpWriteCallback(char *ptr, size_t size, size_t nmemb, void *user
     return total; /* report the full amount consumed even if we truncated */
 }
 
-static bool httpAuthedRequest(const char *url, const char *token, const char *method, HttpBuffer *out)
+/* outStatus is always set (to 0 if curl itself failed before getting a
+ * response) so a caller can print a genuinely diagnostic error - Lichess's
+ * error responses are typically small JSON bodies like {"error":"Missing
+ * scope"} that say exactly what went wrong, e.g. a token created without
+ * the "board:play" scope will authenticate fine for reads (this call
+ * succeeding) but be refused (typically HTTP 403) for anything that
+ * plays/manages a game, like submitting a move. */
+static bool httpAuthedRequest(const char *url, const char *token, const char *method, HttpBuffer *out, long *outStatus)
 {
     CURL *curl = curl_easy_init();
     if (curl == NULL)
+    {
+        if (outStatus != NULL)
+            *outStatus = 0;
         return false;
+    }
 
     out->len = 0;
     out->data[0] = '\0';
@@ -125,11 +168,26 @@ static bool httpAuthedRequest(const char *url, const char *token, const char *me
 
     long httpStatus = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+    if (outStatus != NULL)
+        *outStatus = httpStatus;
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
     return (res == CURLE_OK) && (httpStatus >= 200 && httpStatus < 300);
+}
+
+/* Prints an HTTP failure with whatever diagnostic detail is available -
+ * status code and Lichess's (usually JSON) error body - instead of a bare
+ * "it didn't work". */
+static void printHttpFailure(const char *what, long status, const HttpBuffer *response)
+{
+    printf("%s (HTTP %ld): %s\n", what, status, (response->data[0] != '\0') ? response->data : "(no response body)");
+    if (status == 401)
+        printf("Your token may be invalid or expired - create a new one at https://lichess.org/account/oauth/token\n");
+    else if (status == 403)
+        printf("This usually means your token is missing the \"Play games with the board API\" (board:play)\n"
+               "scope - create a new token at https://lichess.org/account/oauth/token with that box checked.\n");
 }
 
 /* ---------------- Streaming (NDJSON) ---------------- */
@@ -240,19 +298,26 @@ static size_t streamWriteCallback(char *ptr, size_t size, size_t nmemb, void *us
 }
 
 /* One blocking read against the game's event stream: returns once a new
- * opponent move appears, or the game status changes (e.g. ended). */
-static bool lichessStreamOnce(const char *token, const char *gameId, int alreadyApplied,
-                               StreamState *outState)
+ * opponent move appears, or the game status changes (e.g. ended).
+ * outStatus is always set (0 if curl itself failed before any response).
+ * apiSegment is "board" or "bot" - see playLichessGame()'s note on why
+ * bot mode needs an entirely different set of endpoints, not just a flag. */
+static bool lichessStreamOnce(const char *apiSegment, const char *token, const char *gameId, int alreadyApplied,
+                               StreamState *outState, long *outStatus)
 {
     char url[256];
-    snprintf(url, sizeof(url), "%s/api/board/game/stream/%s", LICHESS_API_BASE, gameId);
+    snprintf(url, sizeof(url), "%s/api/%s/game/stream/%s", LICHESS_API_BASE, apiSegment, gameId);
 
     memset(outState, 0, sizeof(*outState));
     outState->alreadyApplied = alreadyApplied;
 
     CURL *curl = curl_easy_init();
     if (curl == NULL)
+    {
+        if (outStatus != NULL)
+            *outStatus = 0;
         return false;
+    }
 
     char authHeader[256];
     snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s", token);
@@ -265,12 +330,22 @@ static bool lichessStreamOnce(const char *token, const char *gameId, int already
 
     CURLcode res = curl_easy_perform(curl);
 
+    long httpStatus = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+    if (outStatus != NULL)
+        *outStatus = httpStatus;
+
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
     /* CURLE_WRITE_ERROR here just means our callback intentionally
-     * aborted the transfer after finding what it needed. */
-    return (res == CURLE_OK) || (res == CURLE_WRITE_ERROR);
+     * aborted the transfer after finding what it needed - but only treat
+     * it as success if the response was actually a successful one (a 404/
+     * 401/403 error body is short enough to also trip the callback's
+     * "found nothing interesting, but got SOME bytes" path otherwise). */
+    if (res == CURLE_OK)
+        return httpStatus >= 200 && httpStatus < 300;
+    return res == CURLE_WRITE_ERROR && httpStatus >= 200 && httpStatus < 300;
 }
 
 /* ---------------- Public API ---------------- */
@@ -287,6 +362,14 @@ bool lichessGetToken(char *buf, size_t bufSize)
 
 void playLichessGame(const char *gameId, bool botMode)
 {
+    /* The Board API (/api/board/...) is for humans relaying moves from a
+     * physical board or third-party client, and explicitly forbids engine
+     * assistance. Having this engine play automatically is only allowed
+     * through the separate Bot API (/api/bot/...), which needs its own
+     * "bot:play" scope and a dedicated Bot account (a one-way upgrade -
+     * see the check below). See docs/ONLINE_PLAY.md for the full story. */
+    const char *apiSegment = botMode ? "bot" : "board";
+
     char token[128];
     if (!lichessGetToken(token, sizeof(token)))
     {
@@ -298,10 +381,11 @@ void playLichessGame(const char *gameId, bool botMode)
 
     HttpBuffer accountInfo;
     char accountUrl[128];
+    long httpStatus = 0;
     snprintf(accountUrl, sizeof(accountUrl), "%s/api/account", LICHESS_API_BASE);
-    if (!httpAuthedRequest(accountUrl, token, "GET", &accountInfo))
+    if (!httpAuthedRequest(accountUrl, token, "GET", &accountInfo, &httpStatus))
     {
-        printf("Could not reach Lichess (check your token and network connection).\n");
+        printHttpFailure("Could not reach Lichess", httpStatus, &accountInfo);
         return;
     }
 
@@ -313,20 +397,39 @@ void playLichessGame(const char *gameId, bool botMode)
     }
     printf("Logged in to Lichess as: %s\n", myId);
 
+    if (botMode)
+    {
+        char title[16] = "";
+        jsonFindString(accountInfo.data, "title", title, sizeof(title));
+        if (strcmp(title, "BOT") != 0)
+        {
+            printf("--bot needs a genuine Lichess Bot account, but '%s' isn't one.\n", myId);
+            printf("Upgrading is IRREVERSIBLE, only works on an account that has NEVER played a\n");
+            printf("game, and needs a token with the \"bot:play\" scope (not \"board:play\"):\n");
+            printf("  curl -d '' https://lichess.org/api/bot/account/upgrade -H \"Authorization: Bearer <token>\"\n");
+            printf("See docs/ONLINE_PLAY.md for details.\n");
+            return;
+        }
+    }
+
     /* First read of the game stream gives us the gameFull payload: our
      * color, both player ids, the starting FEN (if any) and moves so far. */
     StreamState initial;
-    if (!lichessStreamOnce(token, gameId, 0, &initial))
+    if (!lichessStreamOnce(apiSegment, token, gameId, 0, &initial, &httpStatus))
     {
-        printf("Could not open game stream for game '%s'.\n", gameId);
+        printf("Could not open game stream for game '%s' (HTTP %ld).\n", gameId, httpStatus);
+        if (httpStatus == 404)
+            printf("Double-check the game ID - it's the part after lichess.org/ in the game's URL.\n");
+        else if (httpStatus == 400 && !botMode)
+            printf("The Board API only supports Rapid/Classical/Correspondence time controls (plus\n"
+                   "Blitz for direct challenges) - Bullet and UltraBullet aren't supported at all.\n");
         return;
     }
 
     char whiteId[64] = "", blackId[64] = "";
-    jsonFindNestedString(initial.buffer, "white", "id", whiteId, sizeof(whiteId));
-    jsonFindNestedString(initial.buffer, "black", "id", blackId, sizeof(blackId));
+    bool haveWhiteId = jsonFindNestedString(initial.buffer, "white", "id", whiteId, sizeof(whiteId));
+    bool haveBlackId = jsonFindNestedString(initial.buffer, "black", "id", blackId, sizeof(blackId));
 
-    PieceColor myColor = WHITE;
     for (size_t i = 0; whiteId[i]; i++)
         whiteId[i] = (char)tolower((unsigned char)whiteId[i]);
     for (size_t i = 0; blackId[i]; i++)
@@ -337,8 +440,28 @@ void playLichessGame(const char *gameId, bool botMode)
     for (size_t i = 0; myIdLower[i]; i++)
         myIdLower[i] = (char)tolower((unsigned char)myIdLower[i]);
 
-    if (strcmp(blackId, myIdLower) == 0)
+    // An AI opponent's id is JSON null (no quoted string), so "have an id"
+    // and "id matches me" have to be checked separately - a side with no id
+    // can never be a match, but it's still informative: if the other side
+    // *does* have an id and it isn't ours, the id-less side must be us.
+    bool whiteIsMe = haveWhiteId && strcmp(whiteId, myIdLower) == 0;
+    bool blackIsMe = haveBlackId && strcmp(blackId, myIdLower) == 0;
+
+    PieceColor myColor;
+    if (whiteIsMe)
+        myColor = WHITE;
+    else if (blackIsMe)
         myColor = BLACK;
+    else if (!haveWhiteId && haveBlackId)
+        myColor = WHITE;
+    else if (!haveBlackId && haveWhiteId)
+        myColor = BLACK;
+    else
+    {
+        printf("Warning: could not determine which color you're playing (assuming White) -\n");
+        printf("if that's wrong, moves may be sent on the wrong turn.\n");
+        myColor = WHITE;
+    }
 
     printf("Playing as %s in game %s.\n", myColor == WHITE ? "White" : "Black", gameId);
 
@@ -404,7 +527,7 @@ void playLichessGame(const char *gameId, bool botMode)
 
     while (strcmp(status, "started") == 0)
     {
-        printBoard(&board);
+        printBoard(&board, myColor);
 
         if (board.currentPlayer == myColor)
         {
@@ -437,12 +560,12 @@ void playLichessGame(const char *gameId, bool botMode)
             moveToLongAlgebraic(finalMove, uci, sizeof(uci));
 
             char moveUrl[256];
-            snprintf(moveUrl, sizeof(moveUrl), "%s/api/board/game/%s/move/%s",
-                     LICHESS_API_BASE, gameId, uci);
+            snprintf(moveUrl, sizeof(moveUrl), "%s/api/%s/game/%s/move/%s",
+                     LICHESS_API_BASE, apiSegment, gameId, uci);
             HttpBuffer resp;
-            if (!httpAuthedRequest(moveUrl, token, "POST", &resp))
+            if (!httpAuthedRequest(moveUrl, token, "POST", &resp, &httpStatus))
             {
-                printf("Failed to send move to Lichess.\n");
+                printHttpFailure("Failed to send move to Lichess", httpStatus, &resp);
                 continue;
             }
 
@@ -456,9 +579,9 @@ void playLichessGame(const char *gameId, bool botMode)
         {
             printf("\nWaiting for opponent's move...\n");
             StreamState next;
-            if (!lichessStreamOnce(token, gameId, appliedCount, &next))
+            if (!lichessStreamOnce(apiSegment, token, gameId, appliedCount, &next, &httpStatus))
             {
-                printf("Lost connection to game stream.\n");
+                printf("Lost connection to game stream (HTTP %ld).\n", httpStatus);
                 break;
             }
 
@@ -488,6 +611,6 @@ void playLichessGame(const char *gameId, bool botMode)
         }
     }
 
-    printBoard(&board);
+    printBoard(&board, myColor);
     printf("\nGame over. Status: %s\n", status);
 }

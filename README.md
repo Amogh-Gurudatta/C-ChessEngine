@@ -36,7 +36,7 @@ make
 ./build/chess_engine
 ```
 
-You play **White**; the engine plays **Black**. Type a move (`e4` or `e2e4`), then `quit` whenever you want to stop — that's the entire interface. Everything below is optional extras.
+You play **White**; the engine plays **Black**. Type a move (`e4` or `e2e4`), then `quit` whenever you want to stop — that's the entire interface. To play Black instead (the engine moves first), add `--side black`. Everything below is optional extras.
 
 ---
 
@@ -122,6 +122,7 @@ All optional; combine freely.
 | Flag | Effect | Example |
 | --- | --- | --- |
 | `--fen "<fen>"` | Start from a given position instead of the standard opening (or a saved `board.txt`) | `--fen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"` |
+| `--side <white\|black>` | Choose which color you play locally (default `white`); the engine takes the other one and moves first if you pick `black` | `--side black` |
 | `--depth <n>` | Set the engine's search depth (default 6) | `--depth 4` |
 | `--time <seconds>` | Set the engine's per-move time budget (default 5s, `0` disables it) | `--time 3` |
 | `--clock <min>+<inc>` | Play under a real Fischer clock instead of a flat time budget — see below | `--clock 5+3` |
@@ -139,10 +140,28 @@ All optional; combine freely.
 The engine can play a live game on [lichess.org](https://lichess.org) from the terminal via Lichess's [Board API](https://lichess.org/api#tag/Board) (no chess.com support — it has no live-play API to talk to). This is the one feature with an external dependency ([libcurl](https://curl.se/libcurl/)), so it's off by default.
 
 1. **Build with it enabled:** `make LICHESS=1`
-2. **Get a personal API token** at [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token) (with board-play permission) and export it: `export LICHESS_API_TOKEN=lip_xxxxxxxxxxxx`
+2. **Get a personal API token** at [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token) with the **"Play games with the board API" (`board:play`)** scope checked — without it, reading account info and watching a game both work fine, but *sending a move fails*, since that specifically needs `board:play`. Then export it: `export LICHESS_API_TOKEN=lip_xxxxxxxxxxxx`
 3. **Create or accept a game** on lichess.org, then: `./build/chess_engine --lichess <gameId>`
 
-Moves you type are relayed to Lichess and the opponent's moves stream back automatically. Add `--bot` to have the engine play both automatically *and* manage its own time against Lichess's real clock for the game, instead of you typing moves yourself. Details: [docs/ONLINE_PLAY.md](docs/ONLINE_PLAY.md).
+Moves you type are relayed to Lichess and the opponent's moves stream back automatically. Your color is whatever Lichess assigned you for that game (detected automatically from the game data) — `--side` has no effect here, since it's only meaningful for local play, where there's no server to assign a side.
+
+**Board API time control limits**: only Rapid, Classical, and Correspondence games work; Blitz also works but only for direct challenges, games vs the Lichess AI, or bulk pairing. **Bullet and UltraBullet are never supported by the Board API**, regardless of how the game was created — Lichess rejects the connection outright (HTTP 400).
+
+**`--bot` mode is different, and needs its own setup.** The Board API explicitly forbids engine assistance (it's meant for relaying a *human's* moves from a physical board) — automatic play is only allowed through Lichess's separate **Bot API**, which `--bot` switches to entirely:
+
+```bash
+./build/chess_engine --lichess <gameId> --bot
+```
+
+This needs a **dedicated Bot account** (never your main one): generate a token with the **`bot:play`** scope instead, then, on an account that has **never played a single game** (this is required, and the upgrade is **irreversible** — a Bot account can never play rated games again or revert to normal):
+
+```bash
+curl -d '' https://lichess.org/api/bot/account/upgrade -H "Authorization: Bearer <bot-account-token>"
+```
+
+The Bot API allows all time controls except UltraBullet — bullet included. `./build/chess_engine` checks this itself before doing anything else and refuses to run `--bot` against a non-Bot account, rather than attempting the upgrade for you.
+
+**If something fails**, the engine prints the actual HTTP status and Lichess's error message (e.g. `{"error":"Missing scope"}`), plus a hint for the common cases (401 = bad/expired token, 403 = missing scope, 400 on stream open = usually the Board API time-control restriction above). Details: [docs/ONLINE_PLAY.md](docs/ONLINE_PLAY.md).
 
 ---
 
