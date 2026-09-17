@@ -47,6 +47,17 @@
 #define INFINITY_SCORE 1000000
 #define MATE_VALUE (INFINITY_SCORE - 1000)
 
+/* findBestMoveTimed()'s depth ceiling while a real clock is in effect: a
+ * real clock's time budget, not a fixed plies ceiling, should be what
+ * stops the search. Without this, whatever getSearchDepth() happens to be
+ * set to (DEFAULT_SEARCH_DEPTH's 6, if nothing raised it) finishes almost
+ * instantly on modern hardware and returns long before the computed time
+ * budget is actually used, so the engine plays far faster - and weaker -
+ * than the clock would otherwise allow. Kept comfortably below
+ * MAX_KILLER_PLY (128, see below) to leave slack for check-extension
+ * stacking. */
+#define TIMED_SEARCH_MAX_DEPTH 64
+
 static int searchDepth = DEFAULT_SEARCH_DEPTH;
 static double searchTimeLimitSeconds = DEFAULT_SEARCH_TIME_LIMIT;
 static clock_t searchStartTime;
@@ -530,8 +541,15 @@ Move findBestMoveTimed(BoardState *board, double remainingSeconds, double increm
     double previousLimit = searchTimeLimitSeconds;
     setSearchTimeLimit(budget);
 
+    // See TIMED_SEARCH_MAX_DEPTH: only raise it, never lower it, in case
+    // the caller had deliberately set an even higher ceiling already.
+    int previousDepth = searchDepth;
+    if (searchDepth < TIMED_SEARCH_MAX_DEPTH)
+        setSearchDepth(TIMED_SEARCH_MAX_DEPTH);
+
     Move best = findBestMove(board);
 
+    setSearchDepth(previousDepth);
     setSearchTimeLimit(previousLimit);
 
     return best;

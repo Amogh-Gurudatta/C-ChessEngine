@@ -32,13 +32,16 @@ Two independent controls, both adjustable at runtime (`main.c`'s `depth`/`time` 
 - `setSearchDepth(n)` / `getSearchDepth()` — the hard ceiling on plies searched.
 - `setSearchTimeLimit(seconds)` / `getSearchTimeLimit()` — a flat per-move wall-clock cap, checked periodically during the search (`searchShouldStop()`, throttled to once every `TIME_CHECK_INTERVAL` node visits so `clock()` itself doesn't become overhead) via a global `searchAborted` flag that both `negamax()` and `quiescence()` check on entry. Once set, the abort flag causes every in-flight recursive call to return immediately, unwinding the whole tree quickly; `findBestMove()` discards the just-aborted depth's (incomplete, unreliable) results and keeps the last depth that finished cleanly.
 
-That flat cap is what's in effect when **no** real clock is running (e.g. plain local play with no `--clock`). When a real clock *is* in use (`--clock` locally, or `--bot` mode on Lichess), `main.c`/`lichess.c` call `findBestMoveTimed()` instead of `findBestMove()` directly:
+That flat cap is what's in effect when **no** real clock is running (e.g. plain local play with no `--clock`). When a real clock *is* in use (`--clock` locally, `--bot` mode on Lichess, or a UCI `go` with `wtime`/`btime` — see [UCI.md](UCI.md)), the caller uses `findBestMoveTimed()` instead of `findBestMove()` directly:
 
 ```
 findBestMoveTimed(board, remainingSeconds, incrementSeconds)
     = setSearchTimeLimit(computeMoveTimeBudget(board, remainingSeconds, incrementSeconds))
-      then findBestMove(board), then restore the previous time limit
+      then, if the current depth ceiling is below TIMED_SEARCH_MAX_DEPTH (64), raise it there
+      then findBestMove(board), then restore the previous time limit and depth ceiling
 ```
+
+The depth-ceiling bump matters: `getSearchDepth()` defaults to a plies ceiling (6) chosen for a quick response with no clock at all, and on modern hardware a depth-6 search often finishes in a small fraction of a second — well before any real time budget is used up. Without raising the ceiling too, `findBestMove()`'s iterative deepening would simply run out of depths to try and return immediately, leaving most of the computed budget (and therefore most of the engine's actual thinking) unused — the exact bug this fixed: the engine visibly finishing moves far faster than its opponent under a real clock, retaining much more time than it should. `TIMED_SEARCH_MAX_DEPTH` is chosen high enough that the *time* cap, not this ceiling, is what should realistically stop a timed search, while staying safely below `MAX_KILLER_PLY` (128, see Transposition table below) even with some check-extension stacking.
 
 `computeMoveTimeBudget()` is the actual "smart" time allocator — the same category of heuristic real chess engines use:
 
