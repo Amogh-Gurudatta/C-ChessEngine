@@ -20,7 +20,18 @@
  * (no nested or concurrent tokenization of two different lines). */
 
 /* "position [startpos | fen <fen>] [moves <m1> <m2> ...]" - firstToken is
- * the token right after "position" ("startpos" or "fen"), if any. */
+ * the token right after "position" ("startpos" or "fen"), if any.
+ *
+ * The UCI protocol resends the *entire* move list on every single
+ * "position" command rather than incremental updates, so this always
+ * rebuilds from scratch: reset to startpos/fen, then replay every move.
+ * resetMoveHistory() is essential here - see its doc comment in game.h -
+ * because that full replay calls makeMove() repeatedly with no matching
+ * undoMove(), and without resetting first, game.c's internal undo-history
+ * stack accumulates across every single "position" command for the whole
+ * session (this is exactly how, for a real game long enough, "playing
+ * very quickly" and "illegal moves" turned out to be the same underlying
+ * bug: the stack silently overflowed deep into the game). */
 static void uciHandlePosition(BoardState *board, char *firstToken)
 {
     char *token = firstToken;
@@ -29,6 +40,7 @@ static void uciHandlePosition(BoardState *board, char *firstToken)
 
     if (!strcmp(token, "startpos"))
     {
+        resetMoveHistory();
         fenToBoard(UCI_STARTPOS_FEN, board);
         token = strtok(NULL, " \t");
     }
@@ -44,6 +56,7 @@ static void uciHandlePosition(BoardState *board, char *firstToken)
             strncat(fenBuf, token, sizeof(fenBuf) - strlen(fenBuf) - 1);
             token = strtok(NULL, " \t");
         }
+        resetMoveHistory();
         if (!fenToBoard(fenBuf, board))
             return; // malformed FEN; leave the board as it was
     }
@@ -170,6 +183,8 @@ void runUciLoop(void)
     setvbuf(stdout, NULL, _IOLBF, 0);
 
     BoardState board;
+    resetMoveHistory(); // a no-op this early (fresh process), but keeps this
+                         // in lockstep with every other fenToBoard() call site below
     fenToBoard(UCI_STARTPOS_FEN, &board);
 
     char line[UCI_LINE_MAX];
@@ -195,6 +210,7 @@ void runUciLoop(void)
         }
         else if (!strcmp(command, "ucinewgame"))
         {
+            resetMoveHistory(); // see uciHandlePosition()'s doc comment
             fenToBoard(UCI_STARTPOS_FEN, &board);
         }
         else if (!strcmp(command, "position"))

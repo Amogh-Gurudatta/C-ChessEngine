@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "structs.h"
 #include "game.h"
@@ -156,6 +157,47 @@ static void test_fullmove_counter(void)
     CHECK(board.fullmoveNumber == 2, "fullmove increments once Black has moved");
 }
 
+static void test_reset_move_history_after_many_unpaired_makes(void)
+{
+    SECTION("resetMoveHistory keeps undoMove correct after many unpaired makeMove calls");
+
+    /* This is the exact pattern a UCI front end's "position ... moves ..."
+     * handler produces: the protocol resends the *entire* move list on
+     * every single command, replayed via repeated makeMove() calls with no
+     * matching undoMove() - across a long enough game, that's thousands of
+     * pushes onto game.c's internal undo-history stack with nothing ever
+     * popping it back down. Without resetMoveHistory() to clear it between
+     * replays, the stack silently overflows deep into the game and every
+     * makeMove()/undoMove() pair from then on desyncs (undoMove() restores
+     * a stale, unrelated record) - this exact bug produced a real "illegal
+     * move" loss in cutechess after ~90 plies. 5000 unpaired pushes here
+     * comfortably exceeds the *old* (buggy) capacity this stack had before
+     * this fix, to guard against a future regression shrinking it back
+     * down without also restoring the reset call sites. */
+    BoardState board;
+    fenToBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+
+    Move knightOut = {{7, 1}, {5, 2}, EMPTY, MOVE_NORMAL};  // Nb1-c3
+    Move knightBack = {{5, 2}, {7, 1}, EMPTY, MOVE_NORMAL}; // Nc3-b1
+    for (int i = 0; i < 5000; i++)
+        makeMove(&board, (i % 2 == 0) ? knightOut : knightBack);
+
+    resetMoveHistory();
+
+    char beforeFen[FEN_MAX_LEN];
+    boardToFen(&board, beforeFen, sizeof(beforeFen));
+
+    Move testMove = {{6, 4}, {4, 4}, EMPTY, MOVE_NORMAL}; // e2-e4
+    makeMove(&board, testMove);
+    undoMove(&board, testMove);
+
+    char afterFen[FEN_MAX_LEN];
+    boardToFen(&board, afterFen, sizeof(afterFen));
+
+    CHECK(strcmp(beforeFen, afterFen) == 0,
+          "undoMove correctly restores the board after resetMoveHistory(), even after many prior unpaired makeMove calls");
+}
+
 static void test_attack_detection(void)
 {
     SECTION("isSquareAttacked / isKingInCheck");
@@ -192,5 +234,6 @@ void run_game_tests(void)
     test_castling_queenside_black();
     test_rook_capture_revokes_castling_rights();
     test_fullmove_counter();
+    test_reset_move_history_after_many_unpaired_makes();
     test_attack_detection();
 }

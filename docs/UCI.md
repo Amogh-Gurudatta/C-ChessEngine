@@ -27,13 +27,19 @@ Any `tc`/`st` time control works, since `go`'s `wtime`/`btime`/`winc`/`binc` and
 | `uci` | Replies `id name C-ChessEngine`, `id author ...`, `uciok`. No declared options — there's nothing here to configure via `setoption` (depth/time are set purely from `go`'s own parameters per move, not a persistent option). |
 | `isready` | Replies `readyok` immediately — the engine has no asynchronous setup to wait on. |
 | `ucinewgame` | Resets the board to the standard starting position. |
-| `position startpos [moves ...]` | Sets up the standard start, then replays each UCI move (long algebraic — the same format `notation.c`'s `parseLongAlgebraic`/`moveToLongAlgebraic` already use for local play and Lichess) via `resolveMove`/`makeMove`. |
+| `position startpos [moves ...]` | Sets up the standard start, then replays each UCI move (long algebraic — the same format `notation.c`'s `parseLongAlgebraic`/`moveToLongAlgebraic` already use for local play and Lichess) via `resolveMove`/`makeMove`. Calls `game.h`'s `resetMoveHistory()` before replaying — see below. |
 | `position fen <fen> [moves ...]` | Same, but starting from an arbitrary FEN via `notation.c`'s `fenToBoard` — tolerates a FEN missing its trailing halfmove/fullmove fields, which `fenToBoard` already treats as optional. |
 | `go wtime <ms> btime <ms> [winc <ms>] [binc <ms>]` | Full real-clock support: reads whichever side's remaining time is to move, plus its increment, and calls `findBestMoveTimed` — the same time-management heuristic (`computeMoveTimeBudget`) used everywhere else in the engine. |
 | `go movetime <ms>` | A flat per-move budget via `setSearchTimeLimit`. |
 | `go depth <n>` | Searches to exactly that depth, **uncapped by time** — a depth-fixed match expects the full depth regardless of how long it takes, so any previously-set time limit is suspended for this one search and restored after. |
 | `go` (no parameters) | Falls back to whatever depth/time the engine's own defaults are (`ai.c`'s `DEFAULT_SEARCH_DEPTH`/`DEFAULT_SEARCH_TIME_LIMIT`) — practically never hit against a real match runner, which always sends at least one of the above. |
 | `quit` | Exits the loop (and the process, via `main.c` returning). |
+
+## Why `position` resets the move-history stack every time
+
+The UCI protocol resends the *entire* move list on every single `position` command — not just the moves since the last one — so `uciHandlePosition()` always rebuilds from scratch: reset to startpos/fen, then replay every move via `makeMove()`. That replay never calls the matching `undoMove()` (there's nothing to undo — these are real moves being committed), which matters because `game.c` tracks undo data on one shared, file-static stack (see [BOARD_AND_RULES.md](BOARD_AND_RULES.md#makemove--undomove)) that has no way to know a fresh position just got rebuilt on top of it.
+
+Without resetting that stack before each replay, it accumulates across the *whole game* — every `position` command's full replay adds on top of every earlier one, since nothing ever pops it back down. This is exactly how a real cutechess game was lost on "illegal move": around ply 90, the accumulated, never-reset history from ~45 prior `go` commands' worth of replays finally exceeded the stack's capacity, and every `makeMove()`/`undoMove()` pair from that point on (including deep inside the search itself) silently restored the wrong data. The fix is `game.h`'s `resetMoveHistory()`, called at the start of every `position` rebuild and on `ucinewgame` — see that function's doc comment for the full mechanism.
 
 ## What's deliberately not supported
 

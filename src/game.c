@@ -26,7 +26,15 @@ typedef struct
     PieceColor prevPlayer;
 } MoveRecord;
 
-#define MAX_HISTORY 4096
+/* Generous headroom: a caller that keeps calling makeMove() without ever
+ * calling undoMove() (a single continuous game, or - critically - a UCI
+ * front end replaying "position ... moves ..." from scratch on every
+ * command, as GUIs like cutechess always do) pushes here without limit
+ * until resetMoveHistory() is called. 65536 is far more than any single
+ * game legitimately needs, so this is a safety margin, not the primary
+ * defense - see resetMoveHistory()'s doc comment for why callers that
+ * rebuild a position from scratch must call it. */
+#define MAX_HISTORY 65536
 static MoveRecord historyStack[MAX_HISTORY];
 static int historyTop = 0;
 
@@ -38,13 +46,15 @@ static void pushHistory(MoveRecord rec)
     {
         historyStack[historyTop++] = rec;
     }
-    else
-    {
-        // overflow — in practice shouldn't happen; but drop oldest (not ideal)
-        // For safety, cap
-        historyTop = MAX_HISTORY - 1;
-        historyStack[historyTop] = rec;
-    }
+    // Overflow (see MAX_HISTORY's comment): dropping the record here would
+    // desync it from the undoMove() that's still coming for this exact
+    // move, which - since popHistory() unconditionally decrements before
+    // reading - would silently hand back an unrelated, older record
+    // instead. Once genuinely out of room there's no course that isn't
+    // already a bug; leaving historyTop unchanged (never overwriting a
+    // slot without also being the one that later pops it) is the option
+    // that fails by returning stale-but-internally-consistent data rather
+    // than corrupting an unrelated pending undo.
 }
 
 static MoveRecord popHistory(void)
@@ -53,6 +63,28 @@ static MoveRecord popHistory(void)
     if (historyTop <= 0)
         return empty;
     return historyStack[--historyTop];
+}
+
+/**
+ * @brief Resets the internal undo-history stack makeMove()/undoMove() use.
+ * Call this whenever a caller rebuilds a position from scratch rather than
+ * continuing to apply moves to an ongoing game - most importantly, a UCI
+ * front end's "position ... moves ..." handler, which (per the UCI
+ * protocol) receives the *entire* move list again on every single command
+ * and replays it via repeated makeMove() calls with no corresponding
+ * undoMove()s. Without a reset between replays, that history keeps growing
+ * across the whole session with nothing ever popping it back down; a long
+ * enough game eventually exhausts MAX_HISTORY, and every makeMove()/
+ * undoMove() pair from that point on quietly desyncs (undoMove() ends up
+ * restoring a stale, unrelated record) - the position silently corrupts
+ * rather than erroring, which is what actually happened before this
+ * function existed: `position startpos moves <all N moves>` was replayed
+ * fresh on every move, but nothing ever told this file that the previous
+ * replay's history was now irrelevant.
+ */
+void resetMoveHistory(void)
+{
+    historyTop = 0;
 }
 
 static bool onBoard(int r, int c)

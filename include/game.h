@@ -5,7 +5,8 @@
  *
  * See docs/BOARD_AND_RULES.md for the full write-up, including the
  * make/undo history-stack design and its one sharp edge (it isn't reset by
- * loading a new position - see the note on undoMove() below).
+ * loading a new position on its own - see the notes on undoMove() and
+ * resetMoveHistory() below).
  */
 
 #ifndef GAME_H
@@ -51,6 +52,28 @@ void makeMove(BoardState *board, Move move);
  * contents don't actually drive the undo).
  */
 void undoMove(BoardState *board, Move move);
+
+/**
+ * @brief Resets makeMove()/undoMove()'s internal history stack to empty.
+ *
+ * @note This is the other half of the sharp edge documented on undoMove():
+ * that stack has no idea a fresh position was just loaded, so any caller
+ * that rebuilds a position from scratch and then keeps calling makeMove()
+ * on it (rather than starting a fresh game loop) needs to call this first,
+ * or the stack accumulates without bound across every such rebuild. The
+ * concrete case this exists for is a UCI front end's "position ... moves
+ * ..." handler: the protocol resends the *entire* move list on every
+ * single command, which - replayed via repeated makeMove() calls with no
+ * matching undoMove()s - pushes the same moves onto this stack again on
+ * every command. Without resetting first, a long enough game eventually
+ * exhausts it, and every makeMove()/undoMove() pair from then on quietly
+ * desyncs (undoMove() restores a stale, unrelated record instead of the
+ * one that was actually just made) - the position silently corrupts,
+ * eventually surfacing as an illegal move with no obvious cause. Call this
+ * once per fresh rebuild, immediately after (or before) the corresponding
+ * fenToBoard() call.
+ */
+void resetMoveHistory(void);
 
 /**
  * @brief Whether kingColor's king is currently under attack.
