@@ -59,6 +59,28 @@
  * stacking. */
 #define TIMED_SEARCH_MAX_DEPTH 64
 
+/* Null-move pruning (see the NULL-MOVE PRUNING section below): only tried
+ * with at least this much depth left, reduced by this many extra plies
+ * beyond the normal depth-1 recursion. NULL_MOVE_MIN_DEPTH is deliberately
+ * NULL_MOVE_REDUCTION + 2, not just + 1: that guarantees the reduced probe
+ * always retains at least one real ply of full search before quiescence
+ * (depth - 1 - NULL_MOVE_REDUCTION >= 1), rather than sometimes dropping
+ * straight into quiescence - a bare stand-pat "verification" is far too
+ * cheap/unreliable a test and was measured to cause wildly excessive false
+ * cutoffs (thousands-of-times too few nodes searched at some depths) before
+ * this margin was added. See docs/SEARCH_AND_EVAL.md. */
+#define NULL_MOVE_REDUCTION 2
+#define NULL_MOVE_MIN_DEPTH (NULL_MOVE_REDUCTION + 2)
+
+/* Late move reductions (see LMR section below): the first LMR_MIN_MOVE_INDEX
+ * candidates (the TT move, captures, killers - already well-ordered by
+ * scoreMoves()) always get a full-depth search; later quiet moves get a
+ * cheap reduced-depth probe first, re-searched at full depth only if that
+ * probe unexpectedly beats alpha. */
+#define LMR_MIN_DEPTH 3
+#define LMR_MIN_MOVE_INDEX 4
+#define LMR_REDUCTION 1
+
 static int searchDepth = DEFAULT_SEARCH_DEPTH;
 static double searchTimeLimitSeconds = DEFAULT_SEARCH_TIME_LIMIT;
 static clock_t searchStartTime;
@@ -360,13 +382,83 @@ static void recordQuietCutoff(Move m, int ply, int depth)
     historyTable[m.from.row * 8 + m.from.col][m.to.row * 8 + m.to.col] += depth * depth;
 }
 
+/* ========================================================================== */
+/* NULL-MOVE PRUNING & LATE MOVE REDUCTIONS                                  */
+/* ========================================================================== */
+/* See docs/SEARCH_AND_EVAL.md for the full reasoning; both default enabled
+ * like every other search refinement here (TT, killers/history, opening
+ * book) - these toggles exist mainly so tests can compare node counts with
+ * each on vs. off. */
+
+static bool useNullMovePruning = true;
+static bool useLateMoveReductions = true;
+
+void setUseNullMovePruning(bool enabled)
+{
+    useNullMovePruning = enabled;
+}
+
+bool getUseNullMovePruning(void)
+{
+    return useNullMovePruning;
+}
+
+void setUseLateMoveReductions(bool enabled)
+{
+    useLateMoveReductions = enabled;
+}
+
+bool getUseLateMoveReductions(void)
+{
+    return useLateMoveReductions;
+}
+
+/* True if `color` has any piece besides its king and pawns - the standard
+ * zugzwang safeguard for null-move pruning: in a position with only king
+ * and pawns left, passing can genuinely be the best option (the losing
+ * side is often in zugzwang), so the whole "a free move can't help the
+ * opponent more than beta" premise null-move pruning relies on breaks
+ * down. Skipping it whenever this is false is the simple, standard
+ * mitigation (a full verification search is a further refinement, not
+ * needed here). */
+static bool hasNonPawnMaterial(BoardState *board, PieceColor color)
+{
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++)
+        {
+            Piece p = board->squares[r][c];
+            if (p.color == color && p.type != PAWN && p.type != KING)
+                return true;
+        }
+    return false;
+}
+
+/* Makes/undoes a "null move": passing the turn without moving a piece, used
+ * only as null-move pruning's hypothetical probe, never a played move -
+ * halfmoveClock/fullmoveNumber are deliberately left untouched. A real move
+ * always consumes or invalidates enPassantTarget, so a null move must too;
+ * the caller restores it via undoNullMove(). zobristHash()'s existing
+ * recompute-from-scratch design already reflects both changes for free. */
+static void makeNullMove(BoardState *board, Position *savedEnPassant)
+{
+    *savedEnPassant = board->enPassantTarget;
+    board->enPassantTarget = (Position){-1, -1};
+    board->currentPlayer = (board->currentPlayer == WHITE) ? BLACK : WHITE;
+}
+
+static void undoNullMove(BoardState *board, Position savedEnPassant)
+{
+    board->currentPlayer = (board->currentPlayer == WHITE) ? BLACK : WHITE;
+    board->enPassantTarget = savedEnPassant;
+}
+
 /* -------------------------------------------------------------------------- */
 /* INTERNAL FUNCTION PROTOTYPES                                               */
 /* -------------------------------------------------------------------------- */
 
 /* Core Search Logic */
 
-static int negamax(BoardState *board, int depth, int alpha, int beta, int ply);
+static int negamax(BoardState *board, int depth, int alpha, int beta, int ply, bool allowNullMove);
 static int quiescence(BoardState *board, int alpha, int beta);
 
 /* Heuristics & Ordering */
@@ -460,7 +552,7 @@ Move findBestMove(BoardState *board)
              * We flip the result because the opponent's score is bad for us.
              * We swap -beta and -alpha to reflect the perspective shift.
              */
-            int val = -negamax(board, depth - 1, -beta, -alpha, 1);
+            int val = -negamax(board, depth - 1, -beta, -alpha, 1, true);
 
             undoMove(board, currentMove);
 
@@ -651,7 +743,7 @@ static int quiescence(BoardState *board, int alpha, int beta)
  * @param beta Best score minimizer can guarantee.
  * @return The evaluation score relative to the side to move.
  */
-static int negamax(BoardState *board, int depth, int alpha, int beta, int ply)
+static int negamax(BoardState *board, int depth, int alpha, int beta, int ply, bool allowNullMove)
 {
     nodesSearched++;
     if (searchShouldStop())
@@ -698,6 +790,24 @@ static int negamax(BoardState *board, int depth, int alpha, int beta, int ply)
     if (depth <= 0)
         return quiescence(board, alpha, beta);
 
+    // NULL-MOVE PRUNING: give the opponent a free move and see if they
+    // still can't beat beta even with it. If they can't, our actual
+    // position is safely at least that good, and this whole subtree can be
+    // pruned. Guarded against check (can't legally pass), zugzwang
+    // (hasNonPawnMaterial), doing two null moves in a row (allowNullMove),
+    // and being too shallow to be worth it. See docs/SEARCH_AND_EVAL.md.
+    if (useNullMovePruning && allowNullMove && !inCheck && depth >= NULL_MOVE_MIN_DEPTH &&
+        hasNonPawnMaterial(board, board->currentPlayer))
+    {
+        Position savedEnPassant;
+        makeNullMove(board, &savedEnPassant);
+        int nullScore = -negamax(board, depth - 1 - NULL_MOVE_REDUCTION, -beta, -beta + 1, ply + 1, false);
+        undoNullMove(board, savedEnPassant);
+
+        if (nullScore >= beta)
+            return beta;
+    }
+
     // Generate Moves
     MoveList legalMoves = generateAllLegalMoves(board);
 
@@ -729,8 +839,29 @@ static int negamax(BoardState *board, int depth, int alpha, int beta, int ply)
 
         makeMove(board, currentMove);
 
+        int score;
+        bool skipFullDepthSearch = false;
+
+        // LATE MOVE REDUCTIONS: this far into an already-well-ordered move
+        // list (past the TT move, captures, promotions, and killers - see
+        // scoreMove() below), a quiet move is statistically unlikely to be
+        // best. Try it at a reduced depth first; only pay for the full-
+        // depth search below if that cheap probe unexpectedly beats alpha.
+        // Skipped near check (an unreliable moment for a shallow probe) and
+        // once depth is already too shallow to be worth reducing further.
+        // See docs/SEARCH_AND_EVAL.md.
+        if (useLateMoveReductions && i >= LMR_MIN_MOVE_INDEX && depth >= LMR_MIN_DEPTH && isQuiet && !inCheck)
+        {
+            int reducedDepth = depth - 1 - LMR_REDUCTION;
+            if (reducedDepth < 0)
+                reducedDepth = 0;
+            score = -negamax(board, reducedDepth, -beta, -alpha, ply + 1, true);
+            skipFullDepthSearch = (score <= alpha);
+        }
+
         // NegaMax Step: Flip alpha/beta, negate result.
-        int score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+        if (!skipFullDepthSearch)
+            score = -negamax(board, depth - 1, -beta, -alpha, ply + 1, true);
 
         undoMove(board, currentMove);
 

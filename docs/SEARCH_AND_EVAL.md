@@ -18,16 +18,36 @@ Before any of the below runs at all, `findBestMove()` checks `book.c`'s built-in
 
 Why iterative deepening instead of a single fixed-depth search: it's what makes the time cap (`setSearchTimeLimit()`/`findBestMoveTimed()`) meaningful. A single depth-8 search either finishes or it doesn't; there's no "good enough, ran out of time" middle ground. Iterative deepening always has *some* completed, sound result to fall back to the moment time runs out, even if it never reaches the configured depth ceiling. It also actively feeds each depth's result into the next: after a depth finishes, `findBestMove()` re-sorts the root move list with that depth's best move first (see Move ordering below), so alpha-beta at the next, deeper iteration starts from an already-strong guess instead of re-discovering it from scratch.
 
-Three search-time refinements beyond plain NegaMax:
+Five search-time refinements beyond plain NegaMax:
 
 - **Quiescence search** (`quiescence()`): at the search horizon, instead of returning the static evaluation immediately, it keeps searching *captures only* until the position is "quiet" (no more captures available), to avoid the horizon effect — stopping mid-exchange and misjudging a position as fine right before losing a piece. It uses plain MVV-LVA ordering only (see below) — no transposition table, no killers/history; see Transposition table below for why.
 - **Check extension**: when `isKingInCheck()` is true at a node, `negamax()` searches one ply deeper than requested there, so the search doesn't stop right before (and fail to see) a forced mate.
+- **Null-move pruning** and **late move reductions** — see their own section below.
 - **Move ordering** (`scoreMove()`/`scoreMoves()`): alpha-beta pruning is only as good as how quickly it finds a strong move to prune against, so moves are tried in this priority order at every `negamax()` node:
   1. The transposition table's suggested move for this exact position, if any (see below).
   2. Captures, by MVV-LVA ("Most Valuable Victim, Least Valuable Aggressor" — capturing a queen with a pawn ranks above capturing a pawn with a queen).
   3. Promotions.
   4. **Killer moves**: up to two quiet (non-capture) moves per ply that recently caused a beta cutoff in a *sibling* branch at that same ply. The reasoning: a quiet move that refuted one line is a good first guess for refuting a similarly-shaped sibling line too. Stored in a small fixed-size `killerMoves[ply][2]` array, reset at the start of every `findBestMove()` call (they're only meaningful within one search tree) and always bounds-checked against ply, since a very high configured depth plus stacked check extensions could in principle exceed any fixed array size.
   5. Other quiet moves, by **history heuristic**: a `historyTable[from][to]` accumulator incremented by `depth²` every time that move causes a beta cutoff anywhere in the current search (a stronger signal than a single-ply killer, at the cost of being less specific). Also reset per `findBestMove()` call, and clamped in `scoreMove()` so it can never outrank an actual killer.
+
+### Null-move pruning
+
+At a node where the side to move isn't in check, `negamax()` tries giving the opponent a free move (a "null move" - flip `board->currentPlayer`, don't move a piece) and searches *that* at a reduced depth with a narrow `(-beta, -beta+1)` window. If the opponent still can't reach `beta` even with a free tempo, the actual position is safely at least that good, and the whole subtree is pruned without a full search. Toggle: `setUseNullMovePruning()`/`getUseNullMovePruning()` (enabled by default).
+
+Two safeguards keep this sound:
+
+- **Zugzwang**: null-move pruning assumes passing can never be better than moving, which is false in zugzwang positions (common in king-and-pawn endgames, where the side to move would genuinely prefer to pass). `hasNonPawnMaterial()` skips it whenever the side to move has nothing but king and pawns left - the standard, simple mitigation (a full verification search is a further refinement real engines sometimes add; not needed at this scale).
+- **No two null moves in a row**: `negamax()` takes an `allowNullMove` parameter, `true` from every normal recursive call and `false` specifically for the recursive call inside the null-move probe itself, so a second null move can't immediately follow the first.
+
+`NULL_MOVE_MIN_DEPTH` is deliberately `NULL_MOVE_REDUCTION + 2`, not `+ 1`: that guarantees the reduced probe always retains at least one real ply of full search before falling into `quiescence()` (`depth - 1 - NULL_MOVE_REDUCTION >= 1`). A bare quiescence stand-pat is far too cheap and unreliable a "verification" on its own - measured (via a throwaway diagnostic, not part of the permanent suite) to cause node counts thousands of times smaller than correct at some depths before this margin was added, from wildly excessive false cutoffs. With the margin in place, null-move pruning gives the expected, modest textbook effect (roughly 1.5-2x fewer nodes at shallow depths, growing at deeper ones) rather than an unsound one.
+
+Making/undoing a null move needed two small `ai.c`-local functions (`makeNullMove`/`undoNullMove`) since no existing `game.c` function represents "pass the turn" - a `Move` always represents a real piece movement. They flip `currentPlayer` and save/clear/restore `enPassantTarget` (a real move always consumes or invalidates it, so a null move must too), deliberately leaving `halfmoveClock`/`fullmoveNumber` untouched since this is a hypothetical probe, never a played move. `zobristHash()`'s existing recompute-from-scratch design (see Transposition table below) reflects both changes correctly with no extra work.
+
+### Late move reductions (LMR)
+
+Moves ordered late in `scoreMoves()`'s output - past the transposition table's suggestion, captures, promotions, and killers - are statistically unlikely to be the best move. Rather than searching every one of them at full depth, `negamax()` searches late, quiet, non-check moves at a reduced depth first (`LMR_MIN_MOVE_INDEX` onward, once `LMR_MIN_DEPTH` plies remain), and only pays for a full-depth re-search if that cheap probe unexpectedly beats `alpha`. Toggle: `setUseLateMoveReductions()`/`getUseLateMoveReductions()` (enabled by default).
+
+The re-search uses the same full `(-beta, -alpha)` window as an unreduced move would, rather than a null-window probe first - that pairing (Principal Variation Search) is a natural, separate future refinement, left out to keep this simpler. Node-count reduction grows with depth (negligible at shallow depths where the move-index/depth guards rarely apply, several-times fewer nodes by depth 6 in informal testing), consistent with LMR's effect compounding through the tree the same way null-move pruning's does.
 
 ### Time management
 

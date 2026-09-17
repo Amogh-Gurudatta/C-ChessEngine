@@ -136,4 +136,27 @@ bool getUseTranspositionTable(void);
  */
 long getLastSearchNodeCount(void);
 
+/**
+ * @brief Enables or disables null-move pruning (see docs/SEARCH_AND_EVAL.md).
+ * Enabled by default, like every other search refinement here.
+ *
+ * @param enabled Whether null-move pruning should be used.
+ */
+void setUseNullMovePruning(bool enabled);
+
+/** @return Whether null-move pruning is currently enabled. */
+bool getUseNullMovePruning(void);
+
+/**
+ * @brief Enables or disables late move reductions (see
+ * docs/SEARCH_AND_EVAL.md). Enabled by default, like every other search
+ * refinement here.
+ *
+ * @param enabled Whether late move reductions should be used.
+ */
+void setUseLateMoveReductions(bool enabled);
+
+/** @return Whether late move reductions are currently enabled. */
+bool getUseLateMoveReductions(void);
+
 #endif // AI_H

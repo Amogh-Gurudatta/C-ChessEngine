@@ -234,6 +234,126 @@ static void test_transposition_table_reduces_node_count(void)
           "the transposition table reduces the number of nodes searched at the same depth");
 }
 
+static void test_null_move_pruning_toggle(void)
+{
+    SECTION("setUseNullMovePruning/getUseNullMovePruning");
+
+    bool original = getUseNullMovePruning();
+
+    setUseNullMovePruning(false);
+    CHECK(!getUseNullMovePruning(), "setUseNullMovePruning(false) disables it");
+
+    setUseNullMovePruning(true);
+    CHECK(getUseNullMovePruning(), "setUseNullMovePruning(true) re-enables it");
+
+    setUseNullMovePruning(original);
+}
+
+static void test_null_move_pruning_reduces_node_count(void)
+{
+    SECTION("null-move pruning measurably reduces nodes searched");
+
+    /* Same non-opening, non-trivial position the transposition-table node-
+     * count test above avoids reusing the starting position with - deep
+     * enough (6) that negamax actually reaches NULL_MOVE_MIN_DEPTH
+     * internally, unlike the shallower TT test above. */
+    BoardState board;
+    fenToBoard("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3", &board);
+
+    int originalDepth = getSearchDepth();
+    double originalTimeLimit = getSearchTimeLimit();
+    bool originalBookState = getUseOpeningBook();
+    bool originalTTState = getUseTranspositionTable();
+    bool originalNMPState = getUseNullMovePruning();
+    bool originalLMRState = getUseLateMoveReductions();
+
+    setSearchDepth(6);
+    setSearchTimeLimit(0);
+    setUseOpeningBook(false);
+    // The transposition table persists across findBestMove() calls, so
+    // comparing "on" vs "off" on the same position in the same process
+    // would let the second call ride on the first call's cached results
+    // rather than measuring null-move pruning's own effect - disabled here
+    // for both runs to isolate it. Likewise for LMR, so it can't mask or
+    // compound with NMP's own contribution.
+    setUseTranspositionTable(false);
+    setUseLateMoveReductions(false);
+
+    setUseNullMovePruning(false);
+    findBestMove(&board);
+    long nodesWithout = getLastSearchNodeCount();
+
+    fenToBoard("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3", &board);
+    setUseNullMovePruning(true);
+    findBestMove(&board);
+    long nodesWith = getLastSearchNodeCount();
+
+    setSearchDepth(originalDepth);
+    setSearchTimeLimit(originalTimeLimit);
+    setUseOpeningBook(originalBookState);
+    setUseTranspositionTable(originalTTState);
+    setUseNullMovePruning(originalNMPState);
+    setUseLateMoveReductions(originalLMRState);
+
+    CHECK(nodesWith < nodesWithout,
+          "null-move pruning reduces the number of nodes searched at the same depth");
+}
+
+static void test_late_move_reductions_toggle(void)
+{
+    SECTION("setUseLateMoveReductions/getUseLateMoveReductions");
+
+    bool original = getUseLateMoveReductions();
+
+    setUseLateMoveReductions(false);
+    CHECK(!getUseLateMoveReductions(), "setUseLateMoveReductions(false) disables it");
+
+    setUseLateMoveReductions(true);
+    CHECK(getUseLateMoveReductions(), "setUseLateMoveReductions(true) re-enables it");
+
+    setUseLateMoveReductions(original);
+}
+
+static void test_late_move_reductions_reduce_node_count(void)
+{
+    SECTION("late move reductions measurably reduce nodes searched");
+
+    BoardState board;
+    fenToBoard("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3", &board);
+
+    int originalDepth = getSearchDepth();
+    double originalTimeLimit = getSearchTimeLimit();
+    bool originalBookState = getUseOpeningBook();
+    bool originalTTState = getUseTranspositionTable();
+    bool originalNMPState = getUseNullMovePruning();
+    bool originalLMRState = getUseLateMoveReductions();
+
+    setSearchDepth(6);
+    setSearchTimeLimit(0);
+    setUseOpeningBook(false);
+    setUseTranspositionTable(false); // see test_null_move_pruning_reduces_node_count() above
+    setUseNullMovePruning(false);
+
+    setUseLateMoveReductions(false);
+    findBestMove(&board);
+    long nodesWithout = getLastSearchNodeCount();
+
+    fenToBoard("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3", &board);
+    setUseLateMoveReductions(true);
+    findBestMove(&board);
+    long nodesWith = getLastSearchNodeCount();
+
+    setSearchDepth(originalDepth);
+    setSearchTimeLimit(originalTimeLimit);
+    setUseOpeningBook(originalBookState);
+    setUseTranspositionTable(originalTTState);
+    setUseNullMovePruning(originalNMPState);
+    setUseLateMoveReductions(originalLMRState);
+
+    CHECK(nodesWith < nodesWithout,
+          "late move reductions reduce the number of nodes searched at the same depth");
+}
+
 static void test_finds_mate_in_one_at_greater_depth(void)
 {
     SECTION("findBestMove still finds the same forced mate at a much greater depth");
@@ -265,5 +385,9 @@ void run_ai_tests(void)
     test_find_best_move_timed_respects_the_clock();
     test_transposition_table_does_not_change_the_result();
     test_transposition_table_reduces_node_count();
+    test_null_move_pruning_toggle();
+    test_null_move_pruning_reduces_node_count();
+    test_late_move_reductions_toggle();
+    test_late_move_reductions_reduce_node_count();
     test_finds_mate_in_one_at_greater_depth();
 }
