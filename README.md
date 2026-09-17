@@ -165,7 +165,7 @@ curl -d '' https://lichess.org/api/bot/account/upgrade -H "Authorization: Bearer
 
 The Bot API allows all time controls except UltraBullet — bullet included. `./build/chess_engine` checks this itself before doing anything else and refuses to run `--bot` against a non-Bot account, rather than attempting the upgrade for you.
 
-**If something fails**, the engine prints the actual HTTP status and Lichess's error message (e.g. `{"error":"Missing scope"}`), plus a hint for the common cases (401 = bad/expired token, 403 = missing scope, 400 on stream open = usually the Board API time-control restriction above). Details: [docs/ONLINE_PLAY.md](docs/ONLINE_PLAY.md).
+**If something fails**, the engine prints the actual HTTP status and Lichess's error message (e.g. `{"error":"Missing scope"}`), plus a hint for the common cases (401 = bad/expired token, 403 = missing scope, 400 on stream open = usually the Board API time-control restriction above, 429 = rate limited — wait before reconnecting rather than retrying immediately). Details: [docs/ONLINE_PLAY.md](docs/ONLINE_PLAY.md).
 
 ---
 

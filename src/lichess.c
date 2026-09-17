@@ -196,6 +196,15 @@ typedef struct
 {
     char buffer[STREAM_BUF_SIZE];
     size_t len;
+    /* A verbatim copy of the most recently completed NDJSON line, taken
+     * before streamWriteCallback() trims a processed line out of `buffer`.
+     * playLichessGame() reads fields (white/black id, initialFen, moves)
+     * directly out of raw JSON text via jsonFindString()/
+     * jsonFindNestedString() rather than pre-extracted struct fields for
+     * those - it needs this snapshot, since by the time a call returns,
+     * `buffer` itself typically only holds trailing not-yet-newline-
+     * terminated bytes (often nothing at all). */
+    char lastCompleteLine[STREAM_BUF_SIZE];
     int alreadyApplied;
     char foundMove[16];
     bool foundNewMove;
@@ -281,6 +290,8 @@ static size_t streamWriteCallback(char *ptr, size_t size, size_t nmemb, void *us
     while ((newline = strchr(lineStart, '\n')) != NULL)
     {
         *newline = '\0';
+        strncpy(state->lastCompleteLine, lineStart, sizeof(state->lastCompleteLine) - 1);
+        state->lastCompleteLine[sizeof(state->lastCompleteLine) - 1] = '\0';
         processStreamLine(lineStart, state);
         lineStart = newline + 1;
     }
@@ -289,30 +300,88 @@ static size_t streamWriteCallback(char *ptr, size_t size, size_t nmemb, void *us
     memmove(state->buffer, lineStart, remaining + 1);
     state->len = remaining;
 
-    /* Abort the transfer once we have what we came for; the caller treats
-     * the resulting CURLE_WRITE_ERROR as success, not a real failure. */
-    if (state->foundNewMove || state->statusChanged)
-        return 0;
-
+    /* Never abort the transfer: this connection is meant to stay open for
+     * the whole game (see PersistentStream below) - the caller notices
+     * foundNewMove/statusChanged and simply stops polling for now, rather
+     * than the old design of tearing the connection down and reopening it
+     * fresh on every wait. Repeatedly reopening this exact endpoint is
+     * what a real, sufficiently long game was observed to get rate-limited
+     * for (HTTP 429) - see docs/ONLINE_PLAY.md. */
     return total;
 }
 
-/* One blocking read against the game's event stream: returns once a new
- * opponent move appears, or the game status changes (e.g. ended).
- * outStatus is always set (0 if curl itself failed before any response).
- * apiSegment is "board" or "bot" - see playLichessGame()'s note on why
- * bot mode needs an entirely different set of endpoints, not just a flag. */
-static bool lichessStreamOnce(const char *apiSegment, const char *token, const char *gameId, int alreadyApplied,
-                               StreamState *outState, long *outStatus)
+/* Holds ONE long-lived connection to the game's event stream for the
+ * entire game, opened once by lichessStreamOpen() and closed once by
+ * lichessStreamClose() - see docs/ONLINE_PLAY.md for why this replaced an
+ * earlier design that opened a fresh connection to this same endpoint on
+ * every single wait, which was observed to get rate-limited (HTTP 429) on
+ * a real, long-enough game. */
+typedef struct
 {
+    CURL *easy;
+    CURLM *multi;
+    struct curl_slist *headers;
+    StreamState state;
+} PersistentStream;
+
+/* Drives the already-open connection (curl_multi_perform()/curl_multi_poll(),
+ * never a new HTTP request) until streamWriteCallback() flags a new move or
+ * status change, or the transfer itself ends. Used both to read the very
+ * first line (the gameFull payload, via lichessStreamOpen()) and every
+ * subsequent wait (via lichessStreamWait()) - in both cases "something
+ * happened" is exactly the same condition to poll for. */
+static bool lichessStreamPump(PersistentStream *pstream, long *outStatus)
+{
+    int stillRunning = 1;
+    while (stillRunning)
+    {
+        CURLMcode mc = curl_multi_perform(pstream->multi, &stillRunning);
+        if (mc != CURLM_OK)
+            break;
+
+        if (pstream->state.foundNewMove || pstream->state.statusChanged)
+            return true;
+
+        if (stillRunning)
+        {
+            int numfds = 0;
+            curl_multi_poll(pstream->multi, NULL, 0, 1000, &numfds);
+        }
+    }
+
+    /* The transfer ended (or curl_multi_perform() itself failed) without
+     * ever giving us a new event - read back the final HTTP status, if
+     * any, so the caller can report a genuinely diagnostic message. */
+    long httpStatus = 0;
+    int msgsLeft;
+    CURLMsg *msg;
+    while ((msg = curl_multi_info_read(pstream->multi, &msgsLeft)) != NULL)
+    {
+        if (msg->msg == CURLMSG_DONE)
+            curl_easy_getinfo(msg->easy_handle, CURLINFO_RESPONSE_CODE, &httpStatus);
+    }
+    if (outStatus != NULL)
+        *outStatus = httpStatus;
+    return false;
+}
+
+/* Opens the persistent connection and blocks until the first line (the
+ * gameFull payload) has arrived. That line always flips state.status from
+ * "" to a real value ("started", ...), so statusChanged is a reliable
+ * signal that the bootstrap data has arrived - the same signal
+ * lichessStreamWait() below waits on for every later event too.
+ * apiSegment is "board" or "bot" - see playLichessGame()'s note on why bot
+ * mode needs an entirely different set of endpoints, not just a flag. */
+static bool lichessStreamOpen(PersistentStream *pstream, const char *apiSegment, const char *token,
+                               const char *gameId, long *outStatus)
+{
+    memset(pstream, 0, sizeof(*pstream));
+
     char url[256];
     snprintf(url, sizeof(url), "%s/api/%s/game/stream/%s", LICHESS_API_BASE, apiSegment, gameId);
 
-    memset(outState, 0, sizeof(*outState));
-    outState->alreadyApplied = alreadyApplied;
-
-    CURL *curl = curl_easy_init();
-    if (curl == NULL)
+    pstream->easy = curl_easy_init();
+    if (pstream->easy == NULL)
     {
         if (outStatus != NULL)
             *outStatus = 0;
@@ -321,31 +390,50 @@ static bool lichessStreamOnce(const char *apiSegment, const char *token, const c
 
     char authHeader[256];
     snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s", token);
-    struct curl_slist *headers = curl_slist_append(NULL, authHeader);
+    pstream->headers = curl_slist_append(NULL, authHeader);
 
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamWriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, outState);
+    curl_easy_setopt(pstream->easy, CURLOPT_URL, url);
+    curl_easy_setopt(pstream->easy, CURLOPT_HTTPHEADER, pstream->headers);
+    curl_easy_setopt(pstream->easy, CURLOPT_WRITEFUNCTION, streamWriteCallback);
+    curl_easy_setopt(pstream->easy, CURLOPT_WRITEDATA, &pstream->state);
 
-    CURLcode res = curl_easy_perform(curl);
+    pstream->multi = curl_multi_init();
+    if (pstream->multi == NULL)
+    {
+        // Left for the caller's lichessStreamClose() to tidy up (safe even
+        // half-initialized like this - see its own NULL checks), rather
+        // than duplicating cleanup here too.
+        if (outStatus != NULL)
+            *outStatus = 0;
+        return false;
+    }
+    curl_multi_add_handle(pstream->multi, pstream->easy);
 
-    long httpStatus = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
-    if (outStatus != NULL)
-        *outStatus = httpStatus;
+    return lichessStreamPump(pstream, outStatus);
+}
 
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
+/* Resumes reading from the already-open connection (no new HTTP request)
+ * until a new opponent move appears or the game status changes. Returns
+ * false if the underlying connection has ended/failed - the caller should
+ * treat this the same as a lost connection (see playLichessGame()). */
+static bool lichessStreamWait(PersistentStream *pstream, int alreadyApplied, long *outStatus)
+{
+    pstream->state.alreadyApplied = alreadyApplied;
+    pstream->state.foundNewMove = false;
+    pstream->state.statusChanged = false;
+    return lichessStreamPump(pstream, outStatus);
+}
 
-    /* CURLE_WRITE_ERROR here just means our callback intentionally
-     * aborted the transfer after finding what it needed - but only treat
-     * it as success if the response was actually a successful one (a 404/
-     * 401/403 error body is short enough to also trip the callback's
-     * "found nothing interesting, but got SOME bytes" path otherwise). */
-    if (res == CURLE_OK)
-        return httpStatus >= 200 && httpStatus < 300;
-    return res == CURLE_WRITE_ERROR && httpStatus >= 200 && httpStatus < 300;
+static void lichessStreamClose(PersistentStream *pstream)
+{
+    if (pstream->multi != NULL && pstream->easy != NULL)
+        curl_multi_remove_handle(pstream->multi, pstream->easy);
+    if (pstream->easy != NULL)
+        curl_easy_cleanup(pstream->easy);
+    if (pstream->multi != NULL)
+        curl_multi_cleanup(pstream->multi);
+    if (pstream->headers != NULL)
+        curl_slist_free_all(pstream->headers);
 }
 
 /* ---------------- Public API ---------------- */
@@ -412,10 +500,12 @@ void playLichessGame(const char *gameId, bool botMode)
         }
     }
 
-    /* First read of the game stream gives us the gameFull payload: our
-     * color, both player ids, the starting FEN (if any) and moves so far. */
-    StreamState initial;
-    if (!lichessStreamOnce(apiSegment, token, gameId, 0, &initial, &httpStatus))
+    /* Opens ONE connection to the game stream for the entire game (see
+     * PersistentStream above). Its first line gives us the gameFull
+     * payload: our color, both player ids, the starting FEN (if any), and
+     * moves so far. */
+    PersistentStream pstream;
+    if (!lichessStreamOpen(&pstream, apiSegment, token, gameId, &httpStatus))
     {
         printf("Could not open game stream for game '%s' (HTTP %ld).\n", gameId, httpStatus);
         if (httpStatus == 404)
@@ -423,12 +513,15 @@ void playLichessGame(const char *gameId, bool botMode)
         else if (httpStatus == 400 && !botMode)
             printf("The Board API only supports Rapid/Classical/Correspondence time controls (plus\n"
                    "Blitz for direct challenges) - Bullet and UltraBullet aren't supported at all.\n");
+        else if (httpStatus == 429)
+            printf("Rate limited by Lichess - wait a while before trying to reconnect.\n");
+        lichessStreamClose(&pstream);
         return;
     }
 
     char whiteId[64] = "", blackId[64] = "";
-    bool haveWhiteId = jsonFindNestedString(initial.buffer, "white", "id", whiteId, sizeof(whiteId));
-    bool haveBlackId = jsonFindNestedString(initial.buffer, "black", "id", blackId, sizeof(blackId));
+    bool haveWhiteId = jsonFindNestedString(pstream.state.lastCompleteLine, "white", "id", whiteId, sizeof(whiteId));
+    bool haveBlackId = jsonFindNestedString(pstream.state.lastCompleteLine, "black", "id", blackId, sizeof(blackId));
 
     for (size_t i = 0; whiteId[i]; i++)
         whiteId[i] = (char)tolower((unsigned char)whiteId[i]);
@@ -467,12 +560,13 @@ void playLichessGame(const char *gameId, bool botMode)
 
     BoardState board;
     char initialFen[FEN_MAX_LEN];
-    if (jsonFindString(initial.buffer, "initialFen", initialFen, sizeof(initialFen)) &&
+    if (jsonFindString(pstream.state.lastCompleteLine, "initialFen", initialFen, sizeof(initialFen)) &&
         strcmp(initialFen, "startpos") != 0)
     {
         if (!fenToBoard(initialFen, &board))
         {
             printf("Could not parse starting FEN from Lichess; aborting.\n");
+            lichessStreamClose(&pstream);
             return;
         }
     }
@@ -494,7 +588,7 @@ void playLichessGame(const char *gameId, bool botMode)
     /* Replay any moves already played (e.g. reconnecting mid-game). */
     int appliedCount = 0;
     char movesSoFar[4096];
-    if (jsonFindString(initial.buffer, "moves", movesSoFar, sizeof(movesSoFar)))
+    if (jsonFindString(pstream.state.lastCompleteLine, "moves", movesSoFar, sizeof(movesSoFar)))
     {
         char *tok = strtok(movesSoFar, " ");
         while (tok != NULL)
@@ -510,16 +604,16 @@ void playLichessGame(const char *gameId, bool botMode)
     }
 
     char status[32] = "started";
-    if (initial.status[0] != '\0')
+    if (pstream.state.status[0] != '\0')
     {
-        snprintf(status, sizeof(status), "%s", initial.status);
+        snprintf(status, sizeof(status), "%s", pstream.state.status);
     }
 
     // Real Lichess clock, if the game has one; botMode uses this (via
     // findBestMoveTimed) instead of guessing at a time budget.
-    bool haveRealClock = initial.hasClockInfo;
-    double whiteMs = initial.wtimeMs, blackMs = initial.btimeMs;
-    double whiteIncMs = initial.wincMs, blackIncMs = initial.bincMs;
+    bool haveRealClock = pstream.state.hasClockInfo;
+    double whiteMs = pstream.state.wtimeMs, blackMs = pstream.state.btimeMs;
+    double whiteIncMs = pstream.state.wincMs, blackIncMs = pstream.state.bincMs;
 
     if (botMode)
         printf("Bot mode: the engine will play %s's moves automatically.\n",
@@ -578,39 +672,42 @@ void playLichessGame(const char *gameId, bool botMode)
         else
         {
             printf("\nWaiting for opponent's move...\n");
-            StreamState next;
-            if (!lichessStreamOnce(apiSegment, token, gameId, appliedCount, &next, &httpStatus))
+            if (!lichessStreamWait(&pstream, appliedCount, &httpStatus))
             {
                 printf("Lost connection to game stream (HTTP %ld).\n", httpStatus);
+                if (httpStatus == 429)
+                    printf("Rate limited by Lichess - if this keeps happening, wait a while before\n"
+                           "reconnecting rather than retrying immediately.\n");
                 break;
             }
 
-            if (next.hasClockInfo)
+            if (pstream.state.hasClockInfo)
             {
                 haveRealClock = true;
-                whiteMs = next.wtimeMs;
-                blackMs = next.btimeMs;
-                whiteIncMs = next.wincMs;
-                blackIncMs = next.bincMs;
+                whiteMs = pstream.state.wtimeMs;
+                blackMs = pstream.state.btimeMs;
+                whiteIncMs = pstream.state.wincMs;
+                blackIncMs = pstream.state.bincMs;
             }
 
-            if (next.foundNewMove)
+            if (pstream.state.foundNewMove)
             {
                 Move raw, resolved;
-                if (parseLongAlgebraic(next.foundMove, &raw) && resolveMove(&board, raw, &resolved))
+                if (parseLongAlgebraic(pstream.state.foundMove, &raw) && resolveMove(&board, raw, &resolved))
                 {
                     makeMove(&board, resolved);
                     appliedCount++;
                 }
             }
-            if (next.statusChanged)
+            if (pstream.state.statusChanged)
             {
-                strncpy(status, next.status, sizeof(status) - 1);
+                strncpy(status, pstream.state.status, sizeof(status) - 1);
                 status[sizeof(status) - 1] = '\0';
             }
         }
     }
 
+    lichessStreamClose(&pstream);
     printBoard(&board, myColor);
     printf("\nGame over. Status: %s\n", status);
 }
