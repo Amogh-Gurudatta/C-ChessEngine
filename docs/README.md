@@ -9,6 +9,7 @@ Start with [**ARCHITECTURE.md**](ARCHITECTURE.md) for the big picture, then dig 
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Module map, data flow, key invariants, build system | everything |
 | [BOARD_AND_RULES.md](BOARD_AND_RULES.md) | Board representation, move application, check detection, draw rules | `structs.h`, `game.h`/`game.c` |
 | [SEARCH_AND_EVAL.md](SEARCH_AND_EVAL.md) | NegaMax search, alpha-beta, quiescence, iterative deepening, time management, evaluation | `ai.h`/`ai.c`, `eval.h`/`eval.c` |
+| [OPENING_BOOK.md](OPENING_BOOK.md) | Built-in opening book: curated lines, position matching, why it skips search | `book.h`/`book.c` |
 | [NOTATION_AND_FORMATS.md](NOTATION_AND_FORMATS.md) | Long algebraic, SAN, FEN, PGN, and the older custom save format | `notation.h`/`notation.c`, `fileio.h`/`fileio.c` |
 | [ONLINE_PLAY.md](ONLINE_PLAY.md) | Lichess Board API integration, bot mode, chess clocks | `lichess.h`/`lichess.c`, `timecontrol.h`/`timecontrol.c` |
 | [UCI.md](UCI.md) | UCI protocol front end, for driving the engine from cutechess/Arena/etc. | `uci.h`/`uci.c` |

@@ -8,6 +8,10 @@ Covers `include/ai.h`/`src/ai.c` and `include/eval.h`/`src/eval.c`. See [README.
 
 An empty result means the side to move has no legal moves at all: checkmate if `isKingInCheck()` is also true, stalemate otherwise (see [BOARD_AND_RULES.md](BOARD_AND_RULES.md#draw-detection)).
 
+## Opening book
+
+Before any of the below runs at all, `findBestMove()` checks `book.c`'s built-in opening book (`findBookMove()`) and, if the current position is known theory, plays its suggested move immediately - no search needed. See [OPENING_BOOK.md](OPENING_BOOK.md) for how the book is represented and matched.
+
 ## The search: iterative-deepening NegaMax
 
 `findBestMove()` is NegaMax (every node maximizes "me minus opponent", flipping sign on each recursive call, rather than alternating explicit maximizing/minimizing players) with alpha-beta pruning, wrapped in **iterative deepening**: it searches depth 1, then 2, then 3, and so on up to `getSearchDepth()`, keeping the best move from the last depth that finished *completely* before the time cap expired.

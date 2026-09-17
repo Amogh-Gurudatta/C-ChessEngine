@@ -26,11 +26,17 @@ README.md    User-facing: build, install, play
               |              |               |
            game.c         eval.c          fileio.c
       (rules engine)   (position score)  (legacy save format)
-              |              |
-              +------+-------+
+              |              |               |
+              +------+-------+               |
+                     |                        |
+                   book.c  <-------------------
+            (opening book lines; needs
+             game.c's makeMove and
+             fileio.c's pieceToChar)
                      |
                    ai.c
-        (move generation + NegaMax search)
+        (move generation + NegaMax search;
+         checks book.c before searching)
                      |
               +------+-------+
               |               |
@@ -50,7 +56,8 @@ README.md    User-facing: build, install, play
 - **game.c** is the rules engine: `makeMove`/`undoMove`, check and attack detection. It knows nothing about search or notation — just "given a move, apply it correctly."
 - **eval.c** scores a position from White's perspective. It doesn't know about search either; it's a pure function of the board.
 - **fileio.c** is the original save/load format (`board.txt`) plus the `pieceToChar`/`charToPiece` helpers that `notation.c` also reuses for FEN's piece-placement field. It predates `notation.c` and is kept separate deliberately — see [NOTATION_AND_FORMATS.md](NOTATION_AND_FORMATS.md) for why the two formats coexist instead of one replacing the other.
-- **ai.c** is where move generation and the search live together: `generateAllLegalMoves` (pseudo-legal generation per piece type, filtered for king safety via `game.c`'s `makeMove`/`undoMove`) and `findBestMove`/`findBestMoveTimed` (iterative-deepening NegaMax with alpha-beta, quiescence, and MVV-LVA ordering, on top of `eval.c`'s scoring). See [SEARCH_AND_EVAL.md](SEARCH_AND_EVAL.md).
+- **book.c** is the built-in opening book: a curated set of well-known lines `findBestMove()` checks before searching at all. It sits below `ai.c`, not beside it - `ai.c` calls into it, never the other way around - specifically so it only needs `game.c`'s `makeMove` and `fileio.c`'s `pieceToChar`/`charToPiece` to build its lookup table, with no dependency on `ai.h`'s move generation. See [OPENING_BOOK.md](OPENING_BOOK.md).
+- **ai.c** is where move generation and the search live together: `generateAllLegalMoves` (pseudo-legal generation per piece type, filtered for king safety via `game.c`'s `makeMove`/`undoMove`) and `findBestMove`/`findBestMoveTimed` (opening book lookup first, then iterative-deepening NegaMax with alpha-beta, quiescence, and MVV-LVA ordering, on top of `eval.c`'s scoring). See [SEARCH_AND_EVAL.md](SEARCH_AND_EVAL.md).
 - **notation.c** converts between `BoardState`/`Move` and every text format the engine speaks: long algebraic, SAN, FEN, PGN, and the position-key used for repetition detection. It depends on `ai.c` (to generate legal moves for SAN disambiguation and check/mate detection) and `game.c` (to simulate a move when formatting SAN). See [NOTATION_AND_FORMATS.md](NOTATION_AND_FORMATS.md).
 - **timecontrol.c** is a small, self-contained Fischer clock (remaining time + increment per side), shared by local play and Lichess play. See [ONLINE_PLAY.md](ONLINE_PLAY.md).
 - **main.c** is the console REPL: the game loop, command dispatch (`save`, `fen`, `undo`, `depth`, `time`, `resign`, `draw`, ...), draw-condition checks, and clock bookkeeping. It's intentionally "thin" — all the real logic lives in the modules above; `main.c` mostly wires them together and handles I/O.

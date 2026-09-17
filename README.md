@@ -22,6 +22,7 @@ This README covers building, installing, and playing. For how the engine works i
 * **Adjustable Difficulty:** Search depth and/or a per-move time budget can be set from the command line or mid-game.
 * **Real Chess Clocks:** Fischer-style clocks (time + increment) for both sides, with the engine managing its own thinking time based on time left, increment, and game phase — like a real chess engine, not a flat per-move cap.
 * **Tapered Evaluation:** Material, piece-square tables, mobility, bishop pair, rook file bonuses, pawn structure (doubled/isolated/passed), and king safety, blended between **Middlegame (MG)** and **Endgame (EG)** weights based on remaining material.
+* **Opening Book:** ~20 well-known named openings (Italian, Ruy Lopez, Sicilian, French, Queen's Gambit, King's Indian, and more) played instantly from memory instead of re-derived by search — see [docs/OPENING_BOOK.md](docs/OPENING_BOOK.md).
 * **Game Persistence:** Save and load game states through a simple `board.txt` file.
 * **Full Draw Detection:** Checkmate, stalemate, the 50-move rule, insufficient material, and threefold repetition are all detected and end the game automatically.
 * **Standard Notation:** Accepts and prints Standard Algebraic Notation (`e4`, `Nf3`, `O-O`), and can import/export real FEN and PGN.
@@ -193,6 +194,7 @@ Full write-up (module diagram, data flow, key invariants): [docs/ARCHITECTURE.md
 | **structs.h**           | Data Structures   | Defines all core types such as `Piece`, `Move`, `MoveList`, and `BoardState`. | [BOARD_AND_RULES.md](docs/BOARD_AND_RULES.md) |
 | **game.c / game.h**     | Game Logic        | Implements `makeMove`, `undoMove`, attack detection, and rule enforcement.    | [BOARD_AND_RULES.md](docs/BOARD_AND_RULES.md) |
 | **ai.c / ai.h**         | Search Engine     | Contains NegaMax, Alpha-Beta, Quiescence Search, and move generation.         | [SEARCH_AND_EVAL.md](docs/SEARCH_AND_EVAL.md) |
+| **book.c / book.h**     | Opening Book      | Curated named-opening lines, checked before search on every move.            | [OPENING_BOOK.md](docs/OPENING_BOOK.md) |
 | **eval.c / eval.h**     | Evaluation System | Implements material scoring, PSTs, and tapered MG/EG evaluation.              | [SEARCH_AND_EVAL.md](docs/SEARCH_AND_EVAL.md) |
 | **fileio.c / fileio.h** | Persistence Layer | Loads and saves a simplified custom text representation (`board.txt`).       | [NOTATION_AND_FORMATS.md](docs/NOTATION_AND_FORMATS.md) |
 | **notation.c / notation.h** | Notation      | SAN parsing/printing, real FEN import/export, PGN export, long algebraic.     | [NOTATION_AND_FORMATS.md](docs/NOTATION_AND_FORMATS.md) |
@@ -204,7 +206,7 @@ Full write-up (module diagram, data flow, key invariants): [docs/ARCHITECTURE.md
 
 ## **Running Tests**
 
-The project has a lightweight, dependency-free unit test suite covering every module (move generation, `makeMove`/`undoMove`, evaluation, save/load, notation, and the search) except `lichess.c`, which needs a live network connection and account. See [docs/TESTING.md](docs/TESTING.md) for what's covered, what isn't, and how to add a new test.
+The project has a lightweight, dependency-free unit test suite covering every module (move generation, `makeMove`/`undoMove`, evaluation, the opening book, save/load, notation, and the search) except `lichess.c`, which needs a live network connection and account, and the `main.c`/`uci.c` I/O loops. See [docs/TESTING.md](docs/TESTING.md) for what's covered, what isn't, and how to add a new test.
 
 ```bash
 make test

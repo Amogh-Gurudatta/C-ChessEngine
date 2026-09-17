@@ -34,6 +34,7 @@
 #include <time.h>
 
 #include "ai.h"
+#include "book.h"
 #include "eval.h"
 #include "game.h"
 #include "structs.h"
@@ -412,6 +413,25 @@ Move findBestMove(BoardState *board)
     // Guarantee a legal move is always returned, even if the very first
     // depth gets interrupted before finishing.
     bestMove = legalMoves.moves[0];
+
+    // Opening book: if the current position is known theory, play its
+    // suggested continuation immediately instead of spending search time
+    // re-deriving it. The book only ever returns a plain from/to (see
+    // book.h) - re-resolved here against the real legal move list rather
+    // than trusted outright, so it can never return anything but a fully
+    // legal move even in the (extremely unlikely, see docs/OPENING_BOOK.md)
+    // case of its position key matching a position it wasn't built for.
+    Move bookRaw;
+    if (findBookMove(board, &bookRaw))
+    {
+        for (int i = 0; i < legalMoves.count; i++)
+        {
+            Move m = legalMoves.moves[i];
+            if (m.from.row == bookRaw.from.row && m.from.col == bookRaw.from.col &&
+                m.to.row == bookRaw.to.row && m.to.col == bookRaw.to.col)
+                return m;
+        }
+    }
 
     // Sort moves: Check Captures first! Finding a good move early allows
     // Alpha-Beta to prune bad branches later. If a previous, unrelated

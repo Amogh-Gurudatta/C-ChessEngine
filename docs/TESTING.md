@@ -10,7 +10,7 @@ No external test framework — just a shared, minimal assertion macro, consisten
 - One file per module under test (`test_fileio.c`, `test_game.c`, `test_movegen.c`, `test_eval.c`, `test_ai.c`, `test_notation.c`, `test_timecontrol.c`), each exposing a single `void run_X_tests(void)` entry point (not `main()` — see below).
 - `tests/test_main.c` — the actual `main()`, which calls every module's `run_X_tests()` in turn and prints the final `passed/total` summary.
 
-All of these link into one binary (`build/run_tests`, built by `make test`) together with the production object files they need (`notation.o`, `ai.o`, `game.o`, `eval.o`, `fileio.o`, `timecontrol.o`) — `main.c` and `lichess.c` are deliberately excluded (see below).
+All of these link into one binary (`build/run_tests`, built by `make test`) together with the production object files they need (`notation.o`, `ai.o`, `book.o`, `game.o`, `eval.o`, `fileio.o`, `timecontrol.o`) — `main.c`, `lichess.c`, and `uci.c` are deliberately excluded (see below).
 
 ### Adding a new test file
 

@@ -7,6 +7,7 @@ void run_game_tests(void);
 void run_movegen_tests(void);
 void run_eval_tests(void);
 void run_ai_tests(void);
+void run_book_tests(void);
 void run_notation_tests(void);
 void run_timecontrol_tests(void);
 
@@ -17,6 +18,7 @@ int main(void)
     run_movegen_tests();
     run_eval_tests();
     run_ai_tests();
+    run_book_tests();
     run_notation_tests();
     run_timecontrol_tests();
 

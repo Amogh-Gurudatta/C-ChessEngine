@@ -4,6 +4,7 @@
 
 #include "structs.h"
 #include "ai.h"
+#include "book.h"
 #include "game.h"
 #include "notation.h"
 #include "test_common.h"
@@ -179,9 +180,11 @@ static void test_transposition_table_does_not_change_the_result(void)
     int originalDepth = getSearchDepth();
     double originalTimeLimit = getSearchTimeLimit();
     bool originalTTState = getUseTranspositionTable();
+    bool originalBookState = getUseOpeningBook();
 
     setSearchDepth(4);
     setSearchTimeLimit(0); // no time cap: both runs must complete the full depth
+    setUseOpeningBook(false); // this test wants an actual search, not a book move
 
     setUseTranspositionTable(false);
     Move moveWithoutTT = findBestMove(&board);
@@ -192,6 +195,7 @@ static void test_transposition_table_does_not_change_the_result(void)
     setSearchDepth(originalDepth);
     setSearchTimeLimit(originalTimeLimit);
     setUseTranspositionTable(originalTTState);
+    setUseOpeningBook(originalBookState);
 
     CHECK(movesAreEqual(moveWithoutTT, moveWithTT),
           "enabling the transposition table does not change the move a full-depth search finds");
@@ -207,9 +211,11 @@ static void test_transposition_table_reduces_node_count(void)
     int originalDepth = getSearchDepth();
     double originalTimeLimit = getSearchTimeLimit();
     bool originalTTState = getUseTranspositionTable();
+    bool originalBookState = getUseOpeningBook();
 
     setSearchDepth(4);
     setSearchTimeLimit(0);
+    setUseOpeningBook(false); // this test wants an actual search, not a book move
 
     setUseTranspositionTable(false);
     findBestMove(&board);
@@ -222,6 +228,7 @@ static void test_transposition_table_reduces_node_count(void)
     setSearchDepth(originalDepth);
     setSearchTimeLimit(originalTimeLimit);
     setUseTranspositionTable(originalTTState);
+    setUseOpeningBook(originalBookState);
 
     CHECK(nodesWithTT < nodesWithoutTT,
           "the transposition table reduces the number of nodes searched at the same depth");
