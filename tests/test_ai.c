@@ -126,6 +126,14 @@ static void test_compute_move_time_budget(void)
     double endgameBudget = computeMoveTimeBudget(&bareEndgame, 120.0, 0.0);
     CHECK(middlegameBudget > endgameBudget,
           "a position with more material left gets more time than a near-bare endgame on the same clock");
+
+    // A correspondence game reports days per move as a clock: without an
+    // absolute cap, the proportional formula turns that into hours of thinking.
+    double threeDays = 3.0 * 86400.0;
+    CHECK(computeMoveTimeBudget(&startPos, threeDays, 0.0) <= 30.0,
+          "even a multi-day clock (correspondence) never yields more than the hard per-move cap");
+    CHECK(computeMoveTimeBudget(&startPos, threeDays, 0.0) > 1.0,
+          "the cap still leaves a real, useful thinking budget");
 }
 
 static void test_find_best_move_timed_respects_the_clock(void)
@@ -354,6 +362,48 @@ static void test_late_move_reductions_reduce_node_count(void)
           "late move reductions reduce the number of nodes searched at the same depth");
 }
 
+static void test_stable_move_early_exit_toggle(void)
+{
+    SECTION("setUseStableMoveEarlyExit/getUseStableMoveEarlyExit");
+
+    bool original = getUseStableMoveEarlyExit();
+
+    setUseStableMoveEarlyExit(false);
+    CHECK(!getUseStableMoveEarlyExit(), "setUseStableMoveEarlyExit(false) disables it");
+
+    setUseStableMoveEarlyExit(true);
+    CHECK(getUseStableMoveEarlyExit(), "setUseStableMoveEarlyExit(true) re-enables it");
+
+    setUseStableMoveEarlyExit(original);
+}
+
+static void test_stable_move_early_exit_stops_on_a_confirmed_mate(void)
+{
+    SECTION("a timed search stops early once a forced mate is confirmed");
+
+    /* Same mate-in-one as test_finds_mate_in_one(). With a large clock the
+     * budget is the 30s cap; without the early exit this would run for all
+     * of it. */
+    BoardState board;
+    fenToBoard("7k/5ppp/8/8/8/8/8/3RK3 w - - 0 1", &board);
+
+    bool originalExit = getUseStableMoveEarlyExit();
+    bool originalBook = getUseOpeningBook();
+    setUseStableMoveEarlyExit(true);
+    setUseOpeningBook(false);
+
+    clock_t start = clock();
+    Move best = findBestMoveTimed(&board, 3600.0, 0.0);
+    double elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
+
+    setUseStableMoveEarlyExit(originalExit);
+    setUseOpeningBook(originalBook);
+
+    CHECK(best.from.row == 7 && best.from.col == 3 && best.to.row == 0 && best.to.col == 3,
+          "the early exit still reports the mating move, Rd8#");
+    CHECK(elapsed < 5.0, "the search stops long before the 30s budget once the mate is confirmed");
+}
+
 static void test_finds_mate_in_one_at_greater_depth(void)
 {
     SECTION("findBestMove still finds the same forced mate at a much greater depth");
@@ -389,5 +439,7 @@ void run_ai_tests(void)
     test_null_move_pruning_reduces_node_count();
     test_late_move_reductions_toggle();
     test_late_move_reductions_reduce_node_count();
+    test_stable_move_early_exit_toggle();
+    test_stable_move_early_exit_stops_on_a_confirmed_mate();
     test_finds_mate_in_one_at_greater_depth();
 }

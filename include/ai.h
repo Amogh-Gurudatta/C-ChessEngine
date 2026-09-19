@@ -159,4 +159,20 @@ void setUseLateMoveReductions(bool enabled);
 /** @return Whether late move reductions are currently enabled. */
 bool getUseLateMoveReductions(void);
 
+/**
+ * @brief Enables or disables the stable-best-move early exit for
+ * clock-driven searches (findBestMoveTimed() only): once iterative
+ * deepening has kept the same best move at nearly the same score for
+ * several depths in a row (and a meaningful part of the budget is spent),
+ * the search stops and reports it instead of using the rest of the budget.
+ * Enabled by default. Fixed-depth searches (findBestMove()) are never
+ * affected. See docs/SEARCH_AND_EVAL.md.
+ *
+ * @param enabled Whether the early exit should be used.
+ */
+void setUseStableMoveEarlyExit(bool enabled);
+
+/** @return Whether the stable-best-move early exit is currently enabled. */
+bool getUseStableMoveEarlyExit(void);
+
 #endif // AI_H

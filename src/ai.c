@@ -59,6 +59,41 @@
  * stacking. */
 #define TIMED_SEARCH_MAX_DEPTH 64
 
+/* Hard cap on any single move's time budget, however much time is left on
+ * the clock. This engine's strength gains flatten out long before this, and
+ * without a cap a correspondence game (days per move) would make the engine
+ * think for hours. See computeMoveTimeBudget(). */
+#define MAX_MOVE_BUDGET_SECONDS 30.0
+
+/* Stable-best-move early exit (clock-driven searches only): once iterative
+ * deepening has settled - the same best move, at nearly the same score, for
+ * STABLE_MOVE_STREAK consecutive depth-to-depth comparisons - searching
+ * deeper is very unlikely to change the answer, so stop and report it
+ * instead of spending the rest of the budget. Deliberately conservative:
+ * a minimum depth (shallow depths flip-flop a lot), a score margin, and a
+ * minimum fraction of the budget already spent (so this trims *over*-
+ * thinking on quiet positions without reintroducing the engine playing far
+ * faster than its clock allows). See docs/SEARCH_AND_EVAL.md. */
+#define STABLE_MOVE_MIN_DEPTH 8
+#define STABLE_MOVE_STREAK 3
+#define STABLE_MOVE_SCORE_MARGIN 15 /* centipawns */
+#define STABLE_MOVE_MIN_BUDGET_FRACTION 0.25
+
+static bool useStableMoveEarlyExit = true;
+/* Set only by findBestMoveTimed(): fixed-depth and fixed-movetime searches
+ * promised a specific depth/time, so they always run to completion. */
+static bool earlyExitAllowedThisSearch = false;
+
+void setUseStableMoveEarlyExit(bool enabled)
+{
+    useStableMoveEarlyExit = enabled;
+}
+
+bool getUseStableMoveEarlyExit(void)
+{
+    return useStableMoveEarlyExit;
+}
+
 /* Null-move pruning (see the NULL-MOVE PRUNING section below): only tried
  * with at least this much depth left, reduced by this many extra plies
  * beyond the normal depth-1 recursion. NULL_MOVE_MIN_DEPTH is deliberately
@@ -533,6 +568,11 @@ Move findBestMove(BoardState *board)
     TTEntry *rootEntry = ttLookup(rootHash);
     scoreMoves(board, &legalMoves, 0, rootEntry != NULL ? rootEntry->bestMove : noHint);
 
+    Move prevDepthBest = bestMove;
+    int prevDepthScore = 0;
+    int stableStreak = 0;
+    bool haveCompletedDepth = false;
+
     for (int depth = 1; depth <= searchDepth; depth++)
     {
         int alpha = -INFINITY_SCORE;
@@ -584,6 +624,33 @@ Move findBestMove(BoardState *board)
             // best move first again is the strongest ordering hint
             // available, keeping alpha-beta pruning effective as depth grows.
             scoreMoves(board, &legalMoves, 0, bestMove);
+
+            // Stable-best-move early exit (see STABLE_MOVE_MIN_DEPTH).
+            if (haveCompletedDepth && movesEqual(bestMove, prevDepthBest) &&
+                abs(bestValThisDepth - prevDepthScore) <= STABLE_MOVE_SCORE_MARGIN)
+                stableStreak++;
+            else
+                stableStreak = 0;
+            prevDepthBest = bestMove;
+            prevDepthScore = bestValThisDepth;
+            haveCompletedDepth = true;
+
+            if (useStableMoveEarlyExit && earlyExitAllowedThisSearch && searchTimeLimitSeconds > 0)
+            {
+                // A forced win found and confirmed by a second consecutive
+                // depth can't be improved by searching deeper (iterative
+                // deepening finds the shortest mate first), so none of the
+                // conservative gates below apply to it.
+                if (bestValThisDepth >= MATE_SCORE_THRESHOLD && stableStreak >= 1)
+                    break;
+
+                if (depth >= STABLE_MOVE_MIN_DEPTH && stableStreak >= STABLE_MOVE_STREAK)
+                {
+                    double elapsed = (double)(clock() - searchStartTime) / CLOCKS_PER_SEC;
+                    if (elapsed >= searchTimeLimitSeconds * STABLE_MOVE_MIN_BUDGET_FRACTION)
+                        break;
+                }
+            }
         }
 
         if (searchAborted || searchTimeExpired())
@@ -639,6 +706,13 @@ double computeMoveTimeBudget(BoardState *board, double remainingSeconds, double 
             budget = panicBudget;
     }
 
+    // Absolute ceiling, regardless of how much time is left: without it a
+    // huge clock (a correspondence game reporting days per move, or a very
+    // long classical control) turns the proportional formulas above into a
+    // budget of hours per move.
+    if (budget > MAX_MOVE_BUDGET_SECONDS)
+        budget = MAX_MOVE_BUDGET_SECONDS;
+
     if (budget < 0.02)
         budget = 0.02;
 
@@ -659,7 +733,9 @@ Move findBestMoveTimed(BoardState *board, double remainingSeconds, double increm
     if (searchDepth < TIMED_SEARCH_MAX_DEPTH)
         setSearchDepth(TIMED_SEARCH_MAX_DEPTH);
 
+    earlyExitAllowedThisSearch = true;
     Move best = findBestMove(board);
+    earlyExitAllowedThisSearch = false;
 
     setSearchDepth(previousDepth);
     setSearchTimeLimit(previousLimit);

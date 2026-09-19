@@ -74,6 +74,20 @@ The depth-ceiling bump matters: `getSearchDepth()` defaults to a plies ceiling (
 3. **Phase factor**: ×1.2 in a materially rich middlegame (phase 8–20), ×0.7 in a near-bare endgame (phase < 4) — spend more where tactics matter most, less where play is often forced.
 4. **Safety clamp**: never more than 40% of what's left on a single move.
 5. **Panic mode**: below 5 seconds remaining, cut the budget to at most 20% of what's left, so the engine never flags itself.
+6. **Hard cap**: never more than `MAX_MOVE_BUDGET_SECONDS` (30s) on one move, whatever the clock says. Without it, a correspondence game (which reports *days* per move as its clock) gave a budget of ~1.8 hours per move at 3 days, and 8+ hours at 14 days - the engine appeared to think forever on Lichess.
+
+### Stable-best-move early exit
+
+The budget above is a *ceiling*, not a target. Under a clock (`findBestMoveTimed()` only), iterative deepening also stops early once it has settled: when the best move is unchanged, and its score has moved by no more than `STABLE_MOVE_SCORE_MARGIN` (15 centipawns), across `STABLE_MOVE_STREAK` (3) consecutive depth-to-depth comparisons, searching deeper is very unlikely to change the answer, so the engine reports it instead of burning the rest of the budget. Toggle: `setUseStableMoveEarlyExit()`/`getUseStableMoveEarlyExit()` (enabled by default).
+
+It is deliberately conservative, because an earlier bug made the engine play far *faster* than its clock allowed (see the depth-ceiling note above), and this must not quietly bring that back:
+
+- **Minimum depth** (`STABLE_MOVE_MIN_DEPTH`, 8): shallow depths flip-flop between candidate moves constantly, so agreement there means little.
+- **Minimum budget spent** (`STABLE_MOVE_MIN_BUDGET_FRACTION`, 25%): a quiet position where depth 8 is reached in a few milliseconds still gets a real fraction of its budget before the exit can fire.
+- **Forced mates skip these gates**: a winning mate score confirmed by two consecutive depths stops the search immediately - iterative deepening finds the shortest mate first, so searching deeper can't improve it.
+- **Timed searches only**: `findBestMove()` (fixed depth, `go depth`, `go movetime`, the transposition-table tests, ...) always runs to completion, since those callers asked for a specific depth or time.
+
+The score comparison uses each depth's exact root score (the root loop searches with an open window and a rising `alpha`, so the best move's value is exact, not a bound).
 
 See `ai.c`'s `computeMoveTimeBudget()` for the exact constants, and [ONLINE_PLAY.md](ONLINE_PLAY.md) for how the real clock feeds into this for local `--clock` play and Lichess `--bot` mode.
 
